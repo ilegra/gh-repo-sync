@@ -1,0 +1,490 @@
+import fnmatch
+import os
+import re
+import shutil
+import tempfile
+from typing import Dict, List, Optional, Tuple
+import structlog
+
+from src.config import SyncConfig, SyncResult
+from src.git.client import Git, GitError
+from src.providers.base import DestinationProvider, OriginProvider
+
+logger = structlog.get_logger(__name__)
+
+
+def validate_branch_name(branch: str, git: Optional[Git] = None) -> bool:
+    if not branch or branch.startswith("-"):
+        return False
+    # Reject unsafe characters not conforming to safe branch regex
+    if re.search(r"[^a-zA-Z0-9._/-]", branch):
+        return False
+    if ".." in branch or branch.endswith("/") or branch.startswith("/"):
+        return False
+    if git:
+        return git.check_ref_format(branch)
+    return True
+
+
+def is_exclusive_path(target_path: str, exclusive_paths: List[str]) -> bool:
+    target_clean = target_path.strip()
+    if target_clean.startswith("./"):
+        target_clean = target_clean[2:]
+    target_clean = target_clean.lstrip("/")
+
+    for exp in exclusive_paths:
+        clean_exp = exp.strip().strip("/")
+        if not clean_exp:
+            continue
+        if "*" in clean_exp:
+            regex_exp = clean_exp.replace(".", r"\.").replace("*", ".*")
+            pattern = rf"(^|/){regex_exp}(/|$)"
+            if re.search(pattern, target_clean):
+                return True
+        else:
+            pattern = rf"(^|/){re.escape(clean_exp)}(/|$)"
+            if re.search(pattern, target_clean):
+                return True
+    return False
+
+
+def parse_author(log_output: str, default_name: str, default_email: str) -> Tuple[str, str]:
+    if not log_output or "\t" not in log_output:
+        return default_name, default_email
+
+    parts = log_output.split("\t", 1)
+    name = parts[0].strip()
+    email = parts[1].strip() if len(parts) > 1 else ""
+
+    if not name or not email or "@" not in email:
+        return default_name, default_email
+    return name, email
+
+
+class SyncManager:
+    def __init__(
+        self,
+        config: SyncConfig,
+        origin_provider: OriginProvider,
+        destination_provider: DestinationProvider,
+        working_dir: Optional[str] = None,
+    ):
+        self.config = config
+        self.origin_provider = origin_provider
+        self.destination_provider = destination_provider
+        self.custom_working_dir = working_dir
+        self.temp_dir: Optional[str] = None
+
+        self.git: Optional[Git] = None
+        self.default_branch: str = "main"
+        self.origin_branches: List[str] = []
+        self.destination_branches: List[str] = []
+
+        self.synced_branches: List[str] = []
+        self.removed_branches: List[str] = []
+        self.sync_errors: List[str] = []
+
+        self.origin_remote = "origin_remote"
+        self.destination_remote = "destination_remote"
+
+    def _setup_working_directory(self) -> str:
+        if self.custom_working_dir:
+            os.makedirs(self.custom_working_dir, exist_ok=True)
+            return self.custom_working_dir
+        self.temp_dir = tempfile.mkdtemp(prefix="repo_sync_")
+        repo_dir = os.path.join(self.temp_dir, "repo")
+        return repo_dir
+
+    def cleanup(self):
+        if self.temp_dir and os.path.exists(self.temp_dir):
+            shutil.rmtree(self.temp_dir, ignore_errors=True)
+            self.temp_dir = None
+
+    def resolve_origin_author(self, ref: str) -> Tuple[str, str]:
+        if not self.git or not self.git.ref_exists(ref):
+            return self.config.bot_name, self.config.bot_email
+        output = self.git.log_one(ref, "%an%x09%ae")
+        return parse_author(output, self.config.bot_name, self.config.bot_email)
+
+    def protect_destination_exclusive_assets(self, base_ref: str = "HEAD"):
+        if not self.git:
+            return
+        repo_root = self.git.cwd
+        for path in self.config.destination_exclusive_paths:
+            clean_path = path.strip().strip("/")
+            if not clean_path:
+                continue
+
+            ref_check = f"{base_ref}:{clean_path}"
+            full_path = os.path.join(repo_root, clean_path)
+
+            if self.git.ref_exists(ref_check):
+                logger.info("Restoring destination exclusive asset", path=clean_path, base_ref=base_ref)
+                if os.path.exists(full_path):
+                    if os.path.isdir(full_path):
+                        shutil.rmtree(full_path, ignore_errors=True)
+                    else:
+                        os.remove(full_path)
+                self.git.checkout("", base_ref=base_ref, paths=[clean_path])
+                self.git.add([clean_path])
+            else:
+                if os.path.exists(full_path):
+                    logger.info("Removing destination asset not in base ref", path=clean_path)
+                    if os.path.isdir(full_path):
+                        shutil.rmtree(full_path, ignore_errors=True)
+                    else:
+                        os.remove(full_path)
+                    self.git.rm([clean_path], cached=True, rf=True)
+
+    def purge_origin_exclusive_assets(self):
+        if not self.git:
+            return
+        repo_root = self.git.cwd
+        for item in self.config.origin_exclusive_paths:
+            clean_item = item.strip().strip("/")
+            if not clean_item:
+                continue
+
+            if "*" in clean_item:
+                # Glob pattern matching across the repository workspace
+                for root, dirs, files in os.walk(repo_root):
+                    # Check files
+                    for filename in files:
+                        if fnmatch.fnmatch(filename, clean_item):
+                            rel_path = os.path.relpath(os.path.join(root, filename), repo_root)
+                            logger.info("Purging origin exclusive asset (glob file)", path=rel_path)
+                            self.git.rm([rel_path], cached=True, rf=True)
+                            os.remove(os.path.join(root, filename))
+                    # Check directories
+                    for dirname in dirs:
+                        if fnmatch.fnmatch(dirname, clean_item):
+                            rel_path = os.path.relpath(os.path.join(root, dirname), repo_root)
+                            logger.info("Purging origin exclusive asset (glob dir)", path=rel_path)
+                            self.git.rm([rel_path], cached=True, rf=True)
+                            shutil.rmtree(os.path.join(root, dirname), ignore_errors=True)
+            else:
+                # Exact path or directory
+                tracked_files = self.git.ls_files(clean_item)
+                if tracked_files:
+                    logger.info("Purging origin exclusive tracked files", path=clean_item)
+                    self.git.rm(tracked_files, cached=True, rf=True)
+
+                full_path = os.path.join(repo_root, clean_item)
+                if os.path.exists(full_path):
+                    logger.info("Purging origin exclusive workspace file/dir", path=clean_item)
+                    self.git.rm([clean_item], cached=True, rf=True)
+                    if os.path.isdir(full_path):
+                        shutil.rmtree(full_path, ignore_errors=True)
+                    else:
+                        os.remove(full_path)
+
+    def has_exclusive_path_changes(self, dest_ref: str, origin_ref: str) -> bool:
+        if not self.git:
+            return False
+        changed_files = self.git.diff(dest_ref, origin_ref, name_only=True)
+        all_exclusive = self.config.destination_exclusive_paths + self.config.origin_exclusive_paths
+        for file in changed_files:
+            if is_exclusive_path(file, all_exclusive):
+                return True
+        return False
+
+    def resolve_non_exclusive_conflicts(self):
+        if not self.git:
+            return
+        unmerged = self.git.diff(name_only=True, diff_filter="U")
+        all_exclusive = self.config.destination_exclusive_paths + self.config.origin_exclusive_paths
+        for file in unmerged:
+            if not is_exclusive_path(file, all_exclusive):
+                self.git.checkout(file, theirs=True, paths=[file])
+                self.git.add([file])
+
+    def validate_post_merge_state(self, branch: str):
+        if not self.git:
+            return
+        unresolved = self.git.ls_files(unmerged=True)
+        if unresolved:
+            raise GitError(f"Unresolved merge conflicts remain on branch '{branch}':\n" + "\n".join(unresolved))
+
+    def resolve_seed_reference(self, target_branch: str) -> str:
+        if not self.git:
+            return "HEAD"
+        dest_branch_ref = f"{self.destination_remote}/{target_branch}"
+        dest_default_ref = f"{self.destination_remote}/{self.default_branch}"
+        if self.git.ref_exists(dest_branch_ref):
+            return dest_branch_ref
+        if self.git.ref_exists(dest_default_ref):
+            return dest_default_ref
+        return "HEAD"
+
+    def setup_environment(self) -> bool:
+        logger.info("Step 1: Setting up environment and remotes")
+
+        if self.origin_provider.is_repo_disabled():
+            logger.warning("Origin repository is marked as disabled or archived.")
+            return False
+
+        repo_dir = self._setup_working_directory()
+        mask_patterns = [self.config.origin_token, self.config.destination_token]
+        parent_git = Git(os.path.dirname(repo_dir), mask_patterns=mask_patterns)
+
+        dest_url = self.destination_provider.get_authenticated_url()
+        origin_url = self.origin_provider.get_authenticated_url()
+
+        # Clone destination repository
+        logger.info("Cloning destination repository...")
+        parent_git.clone(dest_url, repo_dir)
+
+        self.git = Git(repo_dir, mask_patterns=mask_patterns)
+        self.git.config("user.name", self.config.bot_name)
+        self.git.config("user.email", self.config.bot_email)
+
+        # Set up remotes: rename default 'origin' clone to destination_remote, add origin_remote
+        self.git.run("remote", "rename", "origin", self.destination_remote, check=True)
+        self.git.remote_add(self.origin_remote, origin_url)
+
+        # Fetch both remotes
+        logger.info("Fetching references from remotes...")
+        fetch_origin = self.git.fetch(self.origin_remote, prune=True)
+        if not fetch_origin.success:
+            if "is disabled" in fetch_origin.stderr.lower() or self.origin_provider.is_repo_disabled():
+                logger.warning("Origin repository is disabled.")
+                return False
+            fetch_origin.raise_for_status()
+
+        self.git.fetch(self.destination_remote, prune=True)
+
+        # Identify default branch from destination
+        sym_res = self.git.symbolic_ref(f"refs/remotes/{self.destination_remote}/HEAD", short=True)
+        if sym_res.success and sym_res.stdout:
+            self.default_branch = sym_res.stdout.removeprefix(f"{self.destination_remote}/")
+        else:
+            self.default_branch = "main"
+
+        logger.info("Detected destination default branch", default_branch=self.default_branch)
+
+        # Discover origin branches
+        prefix_origin = f"refs/remotes/{self.origin_remote}/"
+        raw_origin_refs = self.git.for_each_ref(prefix_origin)
+        self.origin_branches = []
+        for ref in raw_origin_refs:
+            b = ref.removeprefix(prefix_origin)
+            if b == "HEAD":
+                continue
+            if not validate_branch_name(b, self.git):
+                logger.warning("Ignoring invalid Origin branch name", branch=b)
+                continue
+            self.origin_branches.append(b)
+
+        # Discover destination branches
+        prefix_dest = f"refs/remotes/{self.destination_remote}/"
+        raw_dest_refs = self.git.for_each_ref(prefix_dest)
+        self.destination_branches = []
+        for ref in raw_dest_refs:
+            b = ref.removeprefix(prefix_dest)
+            if b == "HEAD":
+                continue
+            if not validate_branch_name(b, self.git):
+                logger.warning("Ignoring invalid Destination branch name", branch=b)
+                continue
+            self.destination_branches.append(b)
+
+        logger.info(
+            "Discovered branches",
+            origin_count=len(self.origin_branches),
+            origin_branches=self.origin_branches,
+            dest_count=len(self.destination_branches),
+            dest_branches=self.destination_branches,
+        )
+        return True
+
+    def sync_new_branch(self, dest_branch: str, origin_ref: str):
+        logger.info("Creating new branch on destination", branch=dest_branch)
+        self.git.checkout(dest_branch, base_ref=origin_ref, create=True)
+
+        seed_ref = self.resolve_seed_reference(dest_branch)
+        if self.git.ref_exists(seed_ref):
+            logger.info("Applying exclusive asset seed", seed_ref=seed_ref, branch=dest_branch)
+            self.protect_destination_exclusive_assets(seed_ref)
+
+        self.purge_origin_exclusive_assets()
+
+        author_name, author_email = self.resolve_origin_author(origin_ref)
+        self.git.add(all_files=True)
+
+        if self.git.status_porcelain():
+            msg = f"sync({dest_branch}): align exclusive paths with destination {self.default_branch} [skip actions]"
+            self.git.commit(msg, author=f"{author_name} <{author_email}>")
+        else:
+            msg = f"sync({dest_branch}): initialize branch from origin [skip actions]"
+            self.git.commit(msg, author=f"{author_name} <{author_email}>", allow_empty=True)
+
+        push_res = self.git.push(self.destination_remote, ref=dest_branch)
+        if push_res.success:
+            self.synced_branches.append(dest_branch)
+            logger.info("New branch successfully synced to destination", branch=dest_branch)
+        else:
+            self.sync_errors.append(f"Push failed for branch `{dest_branch}`")
+            logger.error("Failed to push new branch", branch=dest_branch, stderr=push_res.stderr)
+
+    def perform_fast_forward_sync(self, dest_branch: str, origin_ref: str, dest_ref: str):
+        logger.info("Performing fast-forward sync", branch=dest_branch)
+        self.git.checkout(dest_branch, base_ref=origin_ref, create=True)
+
+        self.protect_destination_exclusive_assets(dest_ref)
+        self.purge_origin_exclusive_assets()
+
+        author_name, author_email = self.resolve_origin_author(origin_ref)
+        origin_subject = self.git.log_one(origin_ref, "%s") or "sync changes from origin"
+
+        self.git.add(all_files=True)
+        msg = f"sync({dest_branch}): {origin_subject} [skip actions]"
+        if self.git.status_porcelain():
+            self.git.commit(msg, author=f"{author_name} <{author_email}>")
+        else:
+            self.git.commit(msg, author=f"{author_name} <{author_email}>", allow_empty=True)
+
+        push_res = self.git.push(self.destination_remote, ref=dest_branch)
+        if push_res.success:
+            self.synced_branches.append(dest_branch)
+            logger.info("Fast-forward push succeeded", branch=dest_branch)
+        else:
+            self.sync_errors.append(f"Push failed for branch `{dest_branch}`")
+            logger.error("Fast-forward push failed", branch=dest_branch, stderr=push_res.stderr)
+
+    def perform_three_way_merge_sync(self, dest_branch: str, origin_ref: str, dest_ref: str):
+        logger.info("Performing 3-way merge sync", branch=dest_branch)
+        self.git.checkout(dest_branch, base_ref=dest_ref, create=True)
+
+        author_name, author_email = self.resolve_origin_author(origin_ref)
+        origin_subject = self.git.log_one(origin_ref, "%s") or "sync changes from origin"
+        origin_short_sha = self.git.log_one(origin_ref, "%h") or "unknown"
+
+        sync_msg = (
+            f"sync({dest_branch}): {origin_subject} [skip actions]\n\n"
+            f"Origin commit {origin_short_sha} by {author_name} <{author_email}>"
+        )
+
+        self.git.merge(origin_ref, strategy_option="theirs", no_commit=True, allow_unrelated_histories=True)
+        self.resolve_non_exclusive_conflicts()
+
+        seed_ref = self.resolve_seed_reference(dest_branch)
+        self.protect_destination_exclusive_assets(seed_ref)
+        self.purge_origin_exclusive_assets()
+
+        self.validate_post_merge_state(dest_branch)
+        self.git.add(all_files=True)
+
+        if self.git.status_porcelain():
+            self.git.commit(sync_msg, author=f"{author_name} <{author_email}>")
+        else:
+            self.git.commit(sync_msg, author=f"{author_name} <{author_email}>", allow_empty=True)
+
+        push_res = self.git.push(self.destination_remote, ref=dest_branch)
+        if push_res.success:
+            self.synced_branches.append(dest_branch)
+            logger.info("3-way merge push succeeded", branch=dest_branch)
+        else:
+            self.sync_errors.append(f"Push failed for branch `{dest_branch}`")
+            logger.error("3-way merge push failed", branch=dest_branch, stderr=push_res.stderr)
+
+    def process_branch_sync(self, origin_branch: str):
+        if not validate_branch_name(origin_branch, self.git):
+            return
+
+        # Apply branch name mapping: origin_branch -> dest_branch
+        dest_branch = self.config.branch_mapping.get(origin_branch, origin_branch)
+        if not validate_branch_name(dest_branch, self.git):
+            logger.warning("Mapped destination branch name is invalid", dest_branch=dest_branch)
+            return
+
+        origin_ref = f"refs/remotes/{self.origin_remote}/{origin_branch}"
+        if not self.git.ref_exists(origin_ref):
+            logger.warning("Origin remote reference not found", origin_ref=origin_ref)
+            return
+
+        dest_ref = f"{self.destination_remote}/{dest_branch}"
+
+        # Case 1: Branch does not exist on destination
+        if not self.git.ref_exists(dest_ref):
+            self.sync_new_branch(dest_branch, origin_ref)
+            return
+
+        # Case 2: Destination already has all commits from origin
+        if self.git.merge_base_is_ancestor(origin_ref, dest_ref):
+            logger.info("Branch already fully synced", origin=origin_branch, destination=dest_branch)
+            self.synced_branches.append(dest_branch)
+            return
+
+        # Case 3: Safe fast-forward (no changes in exclusive paths and destination is ancestor of origin)
+        if not self.has_exclusive_path_changes(dest_ref, origin_ref) and self.git.merge_base_is_ancestor(dest_ref, origin_ref):
+            self.perform_fast_forward_sync(dest_branch, origin_ref, dest_ref)
+        else:
+            # Case 4: 3-way merge
+            self.perform_three_way_merge_sync(dest_branch, origin_ref, dest_ref)
+
+    def sync_branches(self):
+        logger.info("Step 2: Syncing branches from Origin to Destination")
+        for branch in self.origin_branches:
+            self.process_branch_sync(branch)
+
+    def prune_deleted_origin_branches(self):
+        logger.info("Step 3: Checking for deleted branches on Origin to prune on Destination")
+        rev_mapping = self.config.reverse_branch_mapping
+
+        for dest_branch in self.destination_branches:
+            if not validate_branch_name(dest_branch, self.git):
+                continue
+
+            # NEVER prune the destination default branch
+            if dest_branch == self.default_branch:
+                continue
+
+            # Determine corresponding origin branch name
+            origin_branch = rev_mapping.get(dest_branch, dest_branch)
+            origin_ref = f"refs/remotes/{self.origin_remote}/{origin_branch}"
+
+            if not self.git.ref_exists(origin_ref):
+                logger.info("Branch deleted on Origin, pruning on Destination", branch=dest_branch)
+                del_res = self.git.push(self.destination_remote, ref=dest_branch, delete=True)
+                if del_res.success:
+                    self.removed_branches.append(dest_branch)
+                else:
+                    self.sync_errors.append(f"Failed to delete branch `{dest_branch}` on destination")
+                    logger.warning("Failed to delete branch on destination", branch=dest_branch)
+
+    def sync_tags(self):
+        logger.info("Step 4: Syncing tags")
+        push_tags = self.git.push(self.destination_remote, tags=True)
+        if not push_tags.success:
+            self.sync_errors.append("Push failed for tags")
+            logger.error("Failed to push tags", stderr=push_tags.stderr)
+
+    def execute(self) -> SyncResult:
+        try:
+            active = self.setup_environment()
+            if not active:
+                res = SyncResult(
+                    repo_name=self.destination_provider.get_repo_name(),
+                    origin_repo=self.config.origin_url,
+                    destination_repo=self.config.destination_url,
+                    already_disabled=True,
+                )
+                res.write_to_file(self.config.sync_json_file)
+                return res
+
+            self.sync_branches()
+            self.prune_deleted_origin_branches()
+            self.sync_tags()
+
+            res = SyncResult(
+                repo_name=self.destination_provider.get_repo_name(),
+                origin_repo=self.config.origin_url,
+                destination_repo=self.config.destination_url,
+                synced_branches=self.synced_branches,
+                removed_branches=self.removed_branches,
+                errors=self.sync_errors,
+            )
+            res.write_to_file(self.config.sync_json_file)
+            return res
+        finally:
+            self.cleanup()
