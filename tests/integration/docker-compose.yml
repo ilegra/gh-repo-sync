@@ -1,0 +1,7 @@
+services:
+  integration-tests:
+    build:
+      context: ../..
+      dockerfile: tests/integration/Dockerfile.test
+    environment:
+      - PYTHONUNBUFFERED=1

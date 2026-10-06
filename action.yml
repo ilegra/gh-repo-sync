@@ -1,0 +1,54 @@
+name: 'Repository Sync Action'
+description: 'Synchronizes repositories from an Origin (Azure DevOps, etc.) to Destination (GitHub), maintaining commit authors and filtering exclusive paths'
+author: 'ilegra'
+branding:
+  icon: 'git-merge'
+  color: 'blue'
+
+inputs:
+  origin-url:
+    description: 'Repository URL of the Origin (Azure DevOps)'
+    required: true
+  origin-token:
+    description: 'Access Token / PAT for Origin'
+    required: true
+  destination-url:
+    description: 'Repository URL of the Destination (GitHub)'
+    required: true
+  destination-token:
+    description: 'GitHub Token or App installation token for Destination'
+    required: true
+  origin-exclusive-paths:
+    description: 'Comma-separated paths on Origin that should be purged from sync'
+    required: false
+    default: ''
+  destination-exclusive-paths:
+    description: 'Comma-separated paths on Destination that must remain protected'
+    required: false
+    default: ''
+  branch-mapping:
+    description: 'Comma-separated branch mapping (origin:dest), e.g. "master:main"'
+    required: false
+    default: ''
+  bot-name:
+    description: 'Git bot author/committer name fallback'
+    required: false
+    default: 'gh-organization-cerc-com[bot]'
+  bot-email:
+    description: 'Git bot author/committer email fallback'
+    required: false
+    default: 'gh-organization-cerc-com[bot]@users.noreply.github.com'
+
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
+  env:
+    ORIGIN_URL: ${{ inputs.origin-url }}
+    ORIGIN_TOKEN: ${{ inputs.origin-token }}
+    DESTINATION_URL: ${{ inputs.destination-url }}
+    DESTINATION_TOKEN: ${{ inputs.destination-token }}
+    ORIGIN_EXCLUSIVE_PATHS: ${{ inputs.origin-exclusive-paths }}
+    DESTINATION_EXCLUSIVE_PATHS: ${{ inputs.destination-exclusive-paths }}
+    BRANCH_MAPPING: ${{ inputs.branch-mapping }}
+    BOT_NAME: ${{ inputs.bot-name }}
+    BOT_EMAIL: ${{ inputs.bot-email }}
