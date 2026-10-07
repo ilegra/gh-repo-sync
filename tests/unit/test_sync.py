@@ -81,4 +81,3 @@ def test_branch_model_is_default() -> None:
         is_default=True,
     )
     assert default_branch.is_default is True
-
