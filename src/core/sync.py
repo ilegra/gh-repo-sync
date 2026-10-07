@@ -77,10 +77,6 @@ class SyncManager:
         self.origin_branches: list[Branch] = []
         self.destination_branches: list[Branch] = []
 
-        self.synced_branches: list[str] = []
-        self.removed_branches: list[str] = []
-        self.sync_errors: list[str] = []
-
         self.origin_remote = getattr(origin_provider, "remote_name", "origin_remote")
         self.destination_remote = getattr(
             destination_provider, "remote_name", "destination_remote"
@@ -287,7 +283,9 @@ class SyncManager:
         )
         return True
 
-    def _sync_new_branch(self, dest_branch: str, origin_ref: str) -> None:
+    def _sync_new_branch(
+        self, dest_branch: str, origin_ref: str
+    ) -> tuple[str | None, str | None]:
         assert self.git is not None
         logger.info("Creating new branch on destination", branch=dest_branch)
         self.git.checkout(dest_branch, base_ref=origin_ref, create=True)
@@ -322,19 +320,20 @@ class SyncManager:
 
         push_res = self.git.push(self.destination_remote, ref=dest_branch)
         if push_res.success:
-            self.synced_branches.append(dest_branch)
             logger.info(
                 "New branch successfully synced to destination", branch=dest_branch
             )
+            return dest_branch, None
         else:
-            self.sync_errors.append(f"Push failed for branch `{dest_branch}`")
+            error_msg = f"Push failed for branch `{dest_branch}`"
             logger.error(
                 "Failed to push new branch", branch=dest_branch, stderr=push_res.stderr
             )
+            return None, error_msg
 
     def _perform_fast_forward_sync(
         self, dest_branch: str, origin_ref: str, dest_ref: str
-    ) -> None:
+    ) -> tuple[str | None, str | None]:
         assert self.git is not None
         logger.info("Performing fast-forward sync", branch=dest_branch)
         self.git.checkout(dest_branch, base_ref=origin_ref, create=True)
@@ -363,17 +362,18 @@ class SyncManager:
 
         push_res = self.git.push(self.destination_remote, ref=dest_branch)
         if push_res.success:
-            self.synced_branches.append(dest_branch)
             logger.info("Fast-forward push succeeded", branch=dest_branch)
+            return dest_branch, None
         else:
-            self.sync_errors.append(f"Push failed for branch `{dest_branch}`")
+            error_msg = f"Push failed for branch `{dest_branch}`"
             logger.error(
                 "Fast-forward push failed", branch=dest_branch, stderr=push_res.stderr
             )
+            return None, error_msg
 
     def _perform_three_way_merge_sync(
         self, dest_branch: str, origin_ref: str, dest_ref: str
-    ) -> None:
+    ) -> tuple[str | None, str | None]:
         assert self.git is not None
         logger.info("Performing 3-way merge sync", branch=dest_branch)
         self.git.checkout(dest_branch, base_ref=dest_ref, create=True)
@@ -418,18 +418,21 @@ class SyncManager:
 
         push_res = self.git.push(self.destination_remote, ref=dest_branch)
         if push_res.success:
-            self.synced_branches.append(dest_branch)
             logger.info("3-way merge push succeeded", branch=dest_branch)
+            return dest_branch, None
         else:
-            self.sync_errors.append(f"Push failed for branch `{dest_branch}`")
+            error_msg = f"Push failed for branch `{dest_branch}`"
             logger.error(
                 "3-way merge push failed", branch=dest_branch, stderr=push_res.stderr
             )
+            return None, error_msg
 
-    def _process_branch_sync(self, origin_branch: Branch) -> None:
+    def _process_branch_sync(
+        self, origin_branch: Branch
+    ) -> tuple[str | None, str | None]:
         assert self.git is not None
         if not validate_branch_name(origin_branch.name, self.git):
-            return
+            return None, None
 
         # Apply branch name mapping: origin_branch.name -> dest_branch
         dest_branch = self.config.branch_mapping.get(
@@ -439,19 +442,18 @@ class SyncManager:
             logger.warning(
                 "Mapped destination branch name is invalid", dest_branch=dest_branch
             )
-            return
+            return None, None
 
         origin_ref = origin_branch.remote_ref
         if not self.git.ref_exists(origin_ref):
             logger.warning("Origin remote reference not found", origin_ref=origin_ref)
-            return
+            return None, None
 
         dest_ref = self.destination_provider.get_remote_ref(dest_branch)
 
         # Case 1: Branch does not exist on destination
         if not self.git.ref_exists(dest_ref):
-            self._sync_new_branch(dest_branch, origin_ref)
-            return
+            return self._sync_new_branch(dest_branch, origin_ref)
 
         # Case 2: Destination already has all commits from origin
         if self.git.merge_base_is_ancestor(origin_ref, dest_ref):
@@ -460,38 +462,52 @@ class SyncManager:
                 origin=origin_branch.name,
                 destination=dest_branch,
             )
-            self.synced_branches.append(dest_branch)
-            return
+            return None, None
 
         # Case 3: Safe fast-forward (no changes in exclusive paths and
         # destination is ancestor of origin)
         if not self._has_exclusive_path_changes(
             dest_ref, origin_ref
         ) and self.git.merge_base_is_ancestor(dest_ref, origin_ref):
-            self._perform_fast_forward_sync(dest_branch, origin_ref, dest_ref)
+            return self._perform_fast_forward_sync(dest_branch, origin_ref, dest_ref)
         else:
             # Case 4: 3-way merge
-            self._perform_three_way_merge_sync(dest_branch, origin_ref, dest_ref)
+            return self._perform_three_way_merge_sync(dest_branch, origin_ref, dest_ref)
 
-    def _sync_branches(self) -> None:
+    def _sync_branches(
+        self, origin_branches: list[Branch]
+    ) -> tuple[list[str], list[str]]:
         logger.info("Step 2: Syncing branches from Origin to Destination")
-        for branch in self.origin_branches:
-            self._process_branch_sync(branch)
+        synced_branches: list[str] = []
+        sync_errors: list[str] = []
 
-    def _prune_deleted_origin_branches(self) -> None:
+        for branch in origin_branches:
+            synced_branch, error = self._process_branch_sync(branch)
+            if synced_branch:
+                synced_branches.append(synced_branch)
+            if error:
+                sync_errors.append(error)
+
+        return synced_branches, sync_errors
+
+    def _prune_deleted_origin_branches(
+        self, destination_branches: list[Branch], default_branch: str
+    ) -> tuple[list[str], list[str]]:
         assert self.git is not None
         logger.info(
             "Step 3: Checking for deleted branches on Origin to prune on Destination"
         )
+        removed_branches: list[str] = []
+        sync_errors: list[str] = []
         rev_mapping = self.config.reverse_branch_mapping
 
-        for dest_branch in self.destination_branches:
+        for dest_branch in destination_branches:
             dest_branch_name = dest_branch.name
             if not validate_branch_name(dest_branch_name, self.git):
                 continue
 
             # NEVER prune the destination default branch
-            if dest_branch.is_default or dest_branch_name == self.default_branch:
+            if dest_branch.is_default or dest_branch_name == default_branch:
                 continue
 
             # Determine corresponding origin branch name
@@ -507,29 +523,44 @@ class SyncManager:
                     self.destination_remote, ref=dest_branch_name, delete=True
                 )
                 if del_res.success:
-                    self.removed_branches.append(dest_branch_name)
+                    removed_branches.append(dest_branch_name)
                 else:
-                    self.sync_errors.append(
+                    error_msg = (
                         f"Failed to delete branch `{dest_branch_name}` on destination"
                     )
+                    sync_errors.append(error_msg)
                     logger.warning(
                         "Failed to delete branch on destination",
                         branch=dest_branch_name,
                     )
+        return removed_branches, sync_errors
 
-    def _sync_tags(self) -> None:
+    def _sync_tags(self) -> tuple[list[str], list[str]]:
         assert self.git is not None
         logger.info("Step 4: Syncing tags")
         push_tags = self.git.push(self.destination_remote, tags=True)
+
+        synced_tags: list[str] = []
+        sync_errors: list[str] = []
+
         if not push_tags.success:
-            self.sync_errors.append("Push failed for tags")
+            sync_errors.append("Push failed for tags")
             logger.error("Failed to push tags", stderr=push_tags.stderr)
+        else:
+            # Parse output for pushed tags
+            # stderr format: " * [new tag]         v1.0.0 -> v1.0.0"
+            for line in push_tags.stderr.splitlines():
+                match = re.search(r"\* \[new tag\]\s+\S+\s+->\s+(\S+)", line)
+                if match:
+                    synced_tags.append(match.group(1))
+
+        return synced_tags, sync_errors
 
     def execute(self) -> SyncResult:
         """Executes repository synchronization and returns the final SyncResult."""
-        active = self._setup_environment()
+        active: bool = self._setup_environment()
         if not active:
-            res = SyncResult(
+            res: SyncResult = SyncResult(
                 repo_name=self.destination_provider.get_repo_name(),
                 origin_repo=self.config.origin_url,
                 destination_repo=self.config.destination_url,
@@ -538,17 +569,33 @@ class SyncManager:
             res.write_to_file(self.config.sync_json_file)
             return res
 
-        self._sync_branches()
-        self._prune_deleted_origin_branches()
-        self._sync_tags()
+        synced_branches: list[str]
+        branch_errors: list[str]
+        synced_branches, branch_errors = self._sync_branches(
+            origin_branches=self.origin_branches
+        )
+
+        removed_branches: list[str]
+        prune_errors: list[str]
+        removed_branches, prune_errors = self._prune_deleted_origin_branches(
+            destination_branches=self.destination_branches,
+            default_branch=self.default_branch,
+        )
+
+        synced_tags: list[str]
+        tag_errors: list[str]
+        synced_tags, tag_errors = self._sync_tags()
+
+        all_errors: list[str] = branch_errors + prune_errors + tag_errors
 
         res = SyncResult(
             repo_name=self.destination_provider.get_repo_name(),
             origin_repo=self.config.origin_url,
             destination_repo=self.config.destination_url,
-            synced_branches=self.synced_branches,
-            removed_branches=self.removed_branches,
-            errors=self.sync_errors,
+            synced_branches=synced_branches,
+            removed_branches=removed_branches,
+            synced_tags=synced_tags,
+            errors=all_errors,
         )
         res.write_to_file(self.config.sync_json_file)
         return res
