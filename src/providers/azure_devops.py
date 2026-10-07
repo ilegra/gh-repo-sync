@@ -7,7 +7,8 @@ import structlog
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 
-from src.providers.base import OriginProvider
+from src.git.client import Git
+from src.providers.base import Branch, OriginProvider, validate_branch_name
 
 logger = structlog.get_logger(__name__)
 
@@ -15,9 +16,26 @@ logger = structlog.get_logger(__name__)
 class AzureDevOpsProvider(OriginProvider):
     """Origin repository provider implementation for Azure DevOps."""
 
-    def __init__(self, repo_url: str, pat: str):
+    def __init__(
+        self,
+        repo_url: str,
+        pat: str,
+        git: Git | None = None,
+        remote_name: str = "origin_remote",
+    ):
+        """
+        Initializes the Azure DevOps Provider.
+
+        Args:
+            repo_url: Azure DevOps repository URL.
+            pat: Personal Access Token for authentication.
+            git: Optional initialized Git client.
+            remote_name: Name of git remote tracking this repository.
+        """
         self.repo_url = repo_url
         self.pat = pat
+        self.git = git
+        self.remote_name = remote_name
         self._session: requests.Session | None = None
 
     def _get_session(self) -> requests.Session:
@@ -114,3 +132,80 @@ class AzureDevOpsProvider(OriginProvider):
             )
 
         return False
+
+    def _ensure_remote(self) -> None:
+        if not self.git:
+            raise RuntimeError("Git client is not initialized for AzureDevOpsProvider")
+        remotes_out = self.git.run("remote", check=False)
+        existing_remotes = (
+            remotes_out.stdout.splitlines() if remotes_out.success else []
+        )
+        if self.remote_name not in existing_remotes:
+            self.git.remote_add(self.remote_name, self.get_authenticated_url())
+
+    def get_remote_ref(self, branch_name: str) -> str:
+        """
+        Returns the remote reference string for a given branch name.
+
+        Args:
+            branch_name: Unqualified branch name.
+
+        Returns:
+            str: Full remote reference path for git operations.
+        """
+        return f"refs/remotes/{self.remote_name}/{branch_name}"
+
+    def get_default_branch(self) -> Branch:
+        """
+        Returns the default branch of the origin repository.
+
+        Returns:
+            Branch: Default branch instance.
+        """
+        if not self.git:
+            return Branch(name="main", remote_ref=self.get_remote_ref("main"))
+
+        sym_res = self.git.symbolic_ref(
+            f"refs/remotes/{self.remote_name}/HEAD", short=True
+        )
+        if sym_res.success and sym_res.stdout:
+            name = sym_res.stdout.removeprefix(f"{self.remote_name}/")
+        else:
+            name = "main"
+        return Branch(name=name, remote_ref=self.get_remote_ref(name))
+
+    def get_branches(self) -> list[Branch]:
+        """
+        Fetches remote references from origin and returns all valid branches.
+
+        Returns:
+            list[Branch]: List of valid branch objects available at origin.
+        """
+        if not self.git:
+            raise RuntimeError("Git client is not initialized for AzureDevOpsProvider")
+
+        self._ensure_remote()
+
+        fetch_origin = self.git.fetch(self.remote_name, prune=True)
+        if not fetch_origin.success:
+            if "is disabled" in fetch_origin.stderr.lower() or self.is_repo_disabled():
+                logger.warning("Origin repository is disabled.")
+                return []
+            fetch_origin.raise_for_status()
+
+        prefix = f"refs/remotes/{self.remote_name}/"
+        raw_refs = self.git.for_each_ref(prefix)
+        branches: list[Branch] = []
+        for ref in raw_refs:
+            branch_name = ref.removeprefix(prefix)
+            if branch_name == "HEAD":
+                continue
+            if not validate_branch_name(branch_name, self.git):
+                logger.warning(
+                    "Ignoring invalid Origin branch name", branch=branch_name
+                )
+                continue
+            branches.append(
+                Branch(name=branch_name, remote_ref=f"{prefix}{branch_name}")
+            )
+        return branches

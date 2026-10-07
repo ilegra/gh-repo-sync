@@ -1,4 +1,5 @@
 import responses
+from pytest_mock import MockerFixture
 
 from src.providers.azure_devops import AzureDevOpsProvider
 
@@ -66,3 +67,130 @@ def test_ado_api_retries_and_failure() -> None:
 
     # Should gracefully catch failure and return False
     assert provider.is_repo_disabled() is False
+
+
+def test_ado_get_remote_ref() -> None:
+    provider = AzureDevOpsProvider(
+        repo_url="https://dev.azure.com/my-org/my-project/_git/my-repo",
+        pat="my-pat-secret",
+        remote_name="custom_origin",
+    )
+    assert provider.get_remote_ref("main") == "refs/remotes/custom_origin/main"
+    assert (
+        provider.get_remote_ref("feature/foo")
+        == "refs/remotes/custom_origin/feature/foo"
+    )
+
+
+def test_ado_get_default_branch_with_symbolic_ref(mocker: MockerFixture) -> None:
+    mock_git = mocker.MagicMock()
+    mock_sym_res = mocker.MagicMock(success=True, stdout="origin_remote/main")
+    mock_git.symbolic_ref.return_value = mock_sym_res
+
+    provider = AzureDevOpsProvider(
+        repo_url="https://dev.azure.com/my-org/my-project/_git/my-repo",
+        pat="my-pat-secret",
+        git=mock_git,
+        remote_name="origin_remote",
+    )
+    branch = provider.get_default_branch()
+    assert branch.name == "main"
+    assert branch.remote_ref == "refs/remotes/origin_remote/main"
+
+
+def test_ado_get_default_branch_fallback(mocker: MockerFixture) -> None:
+    mock_git = mocker.MagicMock()
+    mock_git.symbolic_ref.return_value = mocker.MagicMock(success=False, stdout="")
+
+    provider = AzureDevOpsProvider(
+        repo_url="https://dev.azure.com/my-org/my-project/_git/my-repo",
+        pat="my-pat-secret",
+        git=mock_git,
+    )
+    branch = provider.get_default_branch()
+    assert branch.name == "main"
+    assert branch.remote_ref == "refs/remotes/origin_remote/main"
+
+
+def test_ado_get_branches_success(mocker: MockerFixture) -> None:
+    mock_git = mocker.MagicMock()
+    # Mock remote check
+    mock_git.run.return_value = mocker.MagicMock(success=True, stdout="origin_remote\n")
+    # Mock fetch
+    mock_git.fetch.return_value = mocker.MagicMock(success=True, exit_code=0)
+    # Mock for_each_ref
+    mock_git.for_each_ref.return_value = [
+        "refs/remotes/origin_remote/HEAD",
+        "refs/remotes/origin_remote/main",
+        "refs/remotes/origin_remote/feature/login",
+        "refs/remotes/origin_remote/-bad-branch",
+    ]
+    mock_git.check_ref_format.return_value = True
+
+    provider = AzureDevOpsProvider(
+        repo_url="https://dev.azure.com/my-org/my-project/_git/my-repo",
+        pat="my-pat-secret",
+        git=mock_git,
+        remote_name="origin_remote",
+    )
+    branches = provider.get_branches()
+
+    assert len(branches) == 2
+    assert branches[0].name == "main"
+    assert branches[0].remote_ref == "refs/remotes/origin_remote/main"
+    assert branches[1].name == "feature/login"
+    assert branches[1].remote_ref == "refs/remotes/origin_remote/feature/login"
+    mock_git.fetch.assert_called_once_with("origin_remote", prune=True)
+
+
+def test_ado_get_branches_adds_remote_if_missing(mocker: MockerFixture) -> None:
+    mock_git = mocker.MagicMock()
+    mock_git.run.return_value = mocker.MagicMock(success=True, stdout="other_remote\n")
+    mock_git.fetch.return_value = mocker.MagicMock(success=True, exit_code=0)
+    mock_git.for_each_ref.return_value = ["refs/remotes/origin_remote/main"]
+    mock_git.check_ref_format.return_value = True
+
+    provider = AzureDevOpsProvider(
+        repo_url="https://dev.azure.com/my-org/my-project/_git/my-repo",
+        pat="my-pat-secret",
+        git=mock_git,
+        remote_name="origin_remote",
+    )
+    branches = provider.get_branches()
+
+    mock_git.remote_add.assert_called_once_with(
+        "origin_remote", provider.get_authenticated_url()
+    )
+    assert len(branches) == 1
+    assert branches[0].name == "main"
+
+
+def test_ado_get_branches_handles_disabled_repo(mocker: MockerFixture) -> None:
+    mock_git = mocker.MagicMock()
+    mock_git.run.return_value = mocker.MagicMock(success=True, stdout="origin_remote\n")
+    mock_git.fetch.return_value = mocker.MagicMock(
+        success=False,
+        exit_code=1,
+        stderr="TF401019: The Git repository with name or ID is disabled.",
+    )
+
+    provider = AzureDevOpsProvider(
+        repo_url="https://dev.azure.com/my-org/my-project/_git/my-repo",
+        pat="my-pat-secret",
+        git=mock_git,
+        remote_name="origin_remote",
+    )
+    branches = provider.get_branches()
+    assert branches == []
+
+
+def test_ado_get_branches_requires_git() -> None:
+    provider = AzureDevOpsProvider(
+        repo_url="https://dev.azure.com/my-org/my-project/_git/my-repo",
+        pat="my-pat-secret",
+        git=None,
+    )
+    import pytest
+
+    with pytest.raises(RuntimeError, match="Git client is not initialized"):
+        provider.get_branches()

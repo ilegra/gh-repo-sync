@@ -8,14 +8,26 @@ import pytest
 from src.config import SyncConfig
 from src.core.sync import SyncManager
 from src.git.client import Git
-from src.providers.base import DestinationProvider, OriginProvider
+from src.providers.base import Branch, DestinationProvider, OriginProvider
 
 
 class LocalTestProvider(OriginProvider, DestinationProvider):
-    def __init__(self, repo_url: str, name: str, git_client: Git | None = None) -> None:
+    def __init__(
+        self,
+        repo_url: str,
+        name: str,
+        git_client: Git | None = None,
+        remote_name: str | None = None,
+    ) -> None:
         self.repo_url = repo_url
         self.name = name
         self.git = git_client
+        if remote_name:
+            self.remote_name = remote_name
+        elif "dest" in name.lower() or "dest" in repo_url.lower() or name == "d":
+            self.remote_name = "destination_remote"
+        else:
+            self.remote_name = "origin_remote"
 
     def get_authenticated_url(self) -> str:
         return self.repo_url
@@ -25,6 +37,46 @@ class LocalTestProvider(OriginProvider, DestinationProvider):
 
     def get_repo_name(self) -> str:
         return self.name
+
+    def get_remote_ref(self, branch_name: str) -> str:
+        return f"refs/remotes/{self.remote_name}/{branch_name}"
+
+    def get_default_branch(self) -> Branch:
+        if not self.git:
+            return Branch(name="main", remote_ref=self.get_remote_ref("main"))
+        sym_res = self.git.symbolic_ref(
+            f"refs/remotes/{self.remote_name}/HEAD", short=True
+        )
+        if sym_res.success and sym_res.stdout:
+            name = sym_res.stdout.removeprefix(f"{self.remote_name}/")
+        else:
+            name = "main"
+        return Branch(name=name, remote_ref=self.get_remote_ref(name))
+
+    def get_branches(self) -> list[Branch]:
+        if not self.git:
+            raise RuntimeError("Git client not set")
+        remotes_out = self.git.run("remote", check=False)
+        existing = remotes_out.stdout.splitlines() if remotes_out.success else []
+        if self.remote_name not in existing:
+            if "origin" in existing and self.remote_name == "destination_remote":
+                self.git.run("remote", "rename", "origin", self.remote_name, check=True)
+            else:
+                self.git.remote_add(self.remote_name, self.repo_url)
+
+        fetch_res = self.git.fetch(self.remote_name, prune=True)
+        if not fetch_res.success:
+            fetch_res.raise_for_status()
+
+        prefix = f"refs/remotes/{self.remote_name}/"
+        raw_refs = self.git.for_each_ref(prefix)
+        branches: list[Branch] = []
+        for ref in raw_refs:
+            b = ref.removeprefix(prefix)
+            if b == "HEAD":
+                continue
+            branches.append(Branch(name=b, remote_ref=f"{prefix}{b}"))
+        return branches
 
     def commit(
         self,
