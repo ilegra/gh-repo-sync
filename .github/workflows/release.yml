@@ -162,6 +162,9 @@ jobs:
       - name: Update Floating Major Version Tag
         if: steps.check_tag.outputs.exists == 'false'
         run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           MAJOR_TAG="v$(echo "${{ steps.version.outputs.version }}" | cut -d. -f1)"
           git tag -fa "$MAJOR_TAG" -m "Update floating major tag $MAJOR_TAG to ${{ steps.version.outputs.tag }}"
           git push origin "$MAJOR_TAG" --force
+
