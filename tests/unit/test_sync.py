@@ -182,17 +182,14 @@ def test_determine_default_branch() -> None:
         Branch(name="master", remote_ref="origin/master", is_default=True),
     ]
     assert (
-        SyncManager._determine_default_branch(dest_branches, origin_branches)
-        == "main"
+        SyncManager._determine_default_branch(dest_branches, origin_branches) == "main"
     )
 
     dest_branches_no_default = [
         Branch(name="dev", remote_ref="dest/dev", is_default=False),
     ]
     assert (
-        SyncManager._determine_default_branch(
-            dest_branches_no_default, origin_branches
-        )
+        SyncManager._determine_default_branch(dest_branches_no_default, origin_branches)
         == "master"
     )
 
@@ -205,4 +202,3 @@ def test_determine_default_branch() -> None:
         )
         == "main"
     )
-
