@@ -202,3 +202,97 @@ def test_determine_default_branch() -> None:
         )
         == "main"
     )
+
+
+def test_sync_manager_configures_custom_committer() -> None:
+    config = SyncConfig(
+        ORIGIN_URL="https://dev.azure.com/org/proj/_git/repo",
+        ORIGIN_TOKEN="pat",
+        DESTINATION_URL="https://github.com/org/repo.git",
+        DESTINATION_TOKEN="token",
+        COMMITTER_NAME="Custom Committer Bot",
+        COMMITTER_EMAIL="custom-committer@example.com",
+    )
+    mock_origin = MagicMock()
+    mock_origin.get_branches.return_value = [
+        Branch(name="main", remote_ref="origin/main")
+    ]
+    mock_origin.is_repo_disabled.return_value = False
+
+    mock_dest = MagicMock()
+    mock_dest.get_authenticated_url.return_value = "https://auth-url"
+    mock_dest.get_branches.return_value = [Branch(name="main", remote_ref="dest/main")]
+
+    mock_git = MagicMock()
+    mock_git.cwd = "/tmp/repo"
+
+    with patch("src.core.sync.Git") as mock_git_cls:
+        parent_git = MagicMock()
+        mock_git_cls.return_value = parent_git
+
+        manager = SyncManager(config, mock_origin, mock_dest, mock_git)
+        manager._setup_environment()
+
+        mock_git.config.assert_any_call("user.name", "Custom Committer Bot")
+        mock_git.config.assert_any_call("user.email", "custom-committer@example.com")
+
+
+def test_sync_manager_configures_fallback_committer() -> None:
+    config = SyncConfig(
+        ORIGIN_URL="https://dev.azure.com/org/proj/_git/repo",
+        ORIGIN_TOKEN="pat",
+        DESTINATION_URL="https://github.com/org/repo.git",
+        DESTINATION_TOKEN="token",
+    )
+    mock_origin = MagicMock()
+    mock_origin.get_branches.return_value = [
+        Branch(name="main", remote_ref="origin/main")
+    ]
+    mock_origin.is_repo_disabled.return_value = False
+
+    mock_dest = MagicMock()
+    mock_dest.get_authenticated_url.return_value = "https://auth-url"
+    mock_dest.get_branches.return_value = [Branch(name="main", remote_ref="dest/main")]
+
+    mock_git = MagicMock()
+    mock_git.cwd = "/tmp/repo"
+
+    with patch("src.core.sync.Git") as mock_git_cls:
+        parent_git = MagicMock()
+        mock_git_cls.return_value = parent_git
+
+        manager = SyncManager(config, mock_origin, mock_dest, mock_git)
+        manager._setup_environment()
+
+        mock_git.config.assert_any_call("user.name", "github-actions[bot]")
+        mock_git.config.assert_any_call(
+            "user.email", "github-actions[bot]@users.noreply.github.com"
+        )
+
+
+def test_sync_manager_author_resolution_fallback() -> None:
+    config = SyncConfig(
+        ORIGIN_URL="https://dev.azure.com/org/proj/_git/repo",
+        ORIGIN_TOKEN="pat",
+        DESTINATION_URL="https://github.com/org/repo.git",
+        DESTINATION_TOKEN="token",
+        COMMITTER_NAME="Fallback Committer",
+        COMMITTER_EMAIL="fallback@example.com",
+    )
+    mock_origin = MagicMock()
+    mock_dest = MagicMock()
+    mock_git = MagicMock()
+
+    # Case 1: reference does not exist
+    mock_git.ref_exists.return_value = False
+    manager = SyncManager(config, mock_origin, mock_dest, mock_git)
+    name, email = manager._resolve_origin_author("nonexistent/ref")
+    assert name == "Fallback Committer"
+    assert email == "fallback@example.com"
+
+    # Case 2: reference exists but git log produces invalid/missing email
+    mock_git.ref_exists.return_value = True
+    mock_git.log_one.return_value = "Author Without Email\t"
+    name, email = manager._resolve_origin_author("origin/main")
+    assert name == "Fallback Committer"
+    assert email == "fallback@example.com"

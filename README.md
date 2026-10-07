@@ -16,7 +16,54 @@ Because synchronizing large histories across platforms can inadvertently trigger
 
 The `GitHubProvider` natively formats all synchronization commits to include `[skip actions]` in the commit message. If an upstream commit already includes standard skip tags (like `[skip ci]`, `[no ci]`, etc.), the provider deduplicates these to avoid redundant markers.
 
-## Configuration
+## GitHub Actions Usage
+
+You can use this action directly in your workflow (runs on Linux runners such as `ubuntu-latest` via Docker):
+
+```yaml
+name: Sync Repositories
+on:
+  schedule:
+    - cron: '0 * * * *' # Run hourly
+  workflow_dispatch:     # Allow manual trigger
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required if destination uses GITHUB_TOKEN
+    steps:
+      - name: Sync from Azure DevOps
+        uses: ilegra/gh-repo-sync@v0
+        with:
+          origin-url: 'https://dev.azure.com/org/project/_git/repo'
+          origin-token: ${{ secrets.ADO_PAT }}
+          destination-url: 'https://github.com/org/repo.git'
+          destination-token: ${{ secrets.GH_TOKEN }}
+          branch-mapping: 'master:main'
+          committer-name: 'github-actions[bot]'
+          committer-email: 'github-actions[bot]@users.noreply.github.com'
+```
+
+### Action Inputs
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `origin-url` | **Yes** | — | Repository URL of the Origin (Azure DevOps). |
+| `origin-token` | **Yes** | — | Personal Access Token (PAT) for the Origin. |
+| `destination-url` | **Yes** | — | Repository URL of the Destination (GitHub). |
+| `destination-token` | **Yes** | — | GitHub Token or App installation token with push permissions. |
+| `origin-exclusive-paths` | No | `""` | Comma-separated paths on Origin to purge from sync (e.g. `.pipeline`, `azure-pipelines*.yml`). |
+| `destination-exclusive-paths` | No | `""` | Comma-separated paths on Destination to keep protected (e.g. `.github`). |
+| `branch-mapping` | No | `""` | Comma-separated branch mappings `origin:dest` (e.g. `master:main`). |
+| `committer-name` | No | `github-actions[bot]` | Committer name fallback when origin author cannot be resolved. |
+| `committer-email` | No | `github-actions[bot]@users.noreply.github.com` | Committer email fallback when origin author cannot be resolved. |
+| `bot-name` | No | `""` | Legacy alias for `committer-name`. |
+| `bot-email` | No | `""` | Legacy alias for `committer-email`. |
+
+## CLI / Environment Variable Configuration
+
+For standalone or local container execution, the following environment variables are supported:
 
 | Environment Variable | Description |
 |---------------------|-------------|
@@ -24,38 +71,11 @@ The `GitHubProvider` natively formats all synchronization commits to include `[s
 | `ORIGIN_TOKEN` | Access Token / PAT for the Origin. |
 | `DESTINATION_URL` | The repository URL of the Destination (GitHub). |
 | `DESTINATION_TOKEN` | GitHub Token or App installation token. |
-| `ORIGIN_EXCLUSIVE_PATHS` | Comma-separated paths on Origin to purge from sync (default: `.pipeline`, `azure-pipelines*.yml`, etc.). |
+| `ORIGIN_EXCLUSIVE_PATHS` | Comma-separated paths on Origin to purge from sync (default: `.pipeline`, `azure-pipelines*.yml`). |
 | `DESTINATION_EXCLUSIVE_PATHS` | Comma-separated paths on Destination that must remain protected (default: `.github`). |
 | `BRANCH_MAPPING` | Branch mapping `origin:dest` (e.g., `master:main`). |
-| `BOT_NAME` | Git bot author/committer name fallback. |
-| `BOT_EMAIL` | Git bot author/committer email fallback. |
-
-## GitHub Actions Usage
-
-You can use this synchronization engine directly in a GitHub Actions workflow:
-
-```yaml
-name: Sync Repositories
-on:
-  schedule:
-    - cron: '0 * * * *' # Run hourly
-
-jobs:
-  sync:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Sync from Azure DevOps
-        uses: ilegra/gh-repo-sync@v1
-        with:
-          origin-url: 'https://dev.azure.com/org/project/_git/repo'
-          origin-token: ${{ secrets.ADO_PAT }}
-          destination-url: 'https://github.com/org/repo.git'
-          destination-token: ${{ secrets.GH_TOKEN }}
-          branch-mapping: 'master:main'
-```
+| `COMMITTER_NAME` | Git bot author/committer name fallback (default: `github-actions[bot]`). |
+| `COMMITTER_EMAIL` | Git bot author/committer email fallback (default: `github-actions[bot]@users.noreply.github.com`). |
 
 ## Development and Testing
 

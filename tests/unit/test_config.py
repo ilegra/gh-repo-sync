@@ -63,3 +63,61 @@ def test_sync_result_serialization(tmp_path: Path) -> None:
     content = res_file.read_text()
     assert '"repo_name": "my-repo"' in content
     assert '"synced_branches": [\n    "main",\n    "feature/1"\n  ]' in content
+
+
+def test_config_committer_defaults_and_properties() -> None:
+    config = SyncConfig(
+        ORIGIN_URL="https://dev.azure.com/org/proj/_git/repo",
+        ORIGIN_TOKEN="secret-origin-pat",
+        DESTINATION_URL="https://github.com/org/repo.git",
+        DESTINATION_TOKEN="secret-gh-token",
+    )
+    assert config.bot_name == "github-actions[bot]"
+    assert config.bot_email == "github-actions[bot]@users.noreply.github.com"
+    assert config.committer_name == "github-actions[bot]"
+    assert config.committer_email == "github-actions[bot]@users.noreply.github.com"
+
+
+def test_config_committer_custom_parameterization() -> None:
+    config = SyncConfig(
+        ORIGIN_URL="https://dev.azure.com/org/proj/_git/repo",
+        ORIGIN_TOKEN="secret-origin-pat",
+        DESTINATION_URL="https://github.com/org/repo.git",
+        DESTINATION_TOKEN="secret-gh-token",
+        COMMITTER_NAME="Custom CI Bot",
+        COMMITTER_EMAIL="custom-ci@example.com",
+    )
+    assert config.bot_name == "Custom CI Bot"
+    assert config.bot_email == "custom-ci@example.com"
+    assert config.committer_name == "Custom CI Bot"
+    assert config.committer_email == "custom-ci@example.com"
+
+
+def test_config_committer_empty_or_whitespace_falls_back() -> None:
+    config = SyncConfig(
+        ORIGIN_URL="https://dev.azure.com/org/proj/_git/repo",
+        ORIGIN_TOKEN="secret-origin-pat",
+        DESTINATION_URL="https://github.com/org/repo.git",
+        DESTINATION_TOKEN="secret-gh-token",
+        COMMITTER_NAME="   ",
+        COMMITTER_EMAIL="",
+    )
+    assert config.bot_name == "github-actions[bot]"
+    assert config.bot_email == "github-actions[bot]@users.noreply.github.com"
+    assert config.committer_name == "github-actions[bot]"
+    assert config.committer_email == "github-actions[bot]@users.noreply.github.com"
+
+
+def test_config_committer_env_aliases(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ORIGIN_URL", "https://dev.azure.com/org/proj/_git/repo")
+    monkeypatch.setenv("ORIGIN_TOKEN", "pat")
+    monkeypatch.setenv("DESTINATION_URL", "https://github.com/org/repo.git")
+    monkeypatch.setenv("DESTINATION_TOKEN", "token")
+    monkeypatch.setenv("GIT_COMMITTER_NAME", "Git Env Committer")
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "committer@git.env")
+
+    config = SyncConfig()
+    assert config.bot_name == "Git Env Committer"
+    assert config.bot_email == "committer@git.env"
+    assert config.committer_name == "Git Env Committer"
+    assert config.committer_email == "committer@git.env"
