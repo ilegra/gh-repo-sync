@@ -1,4 +1,14 @@
-from src.core.sync import is_exclusive_path, parse_author, validate_branch_name
+from typing import Any
+from unittest.mock import MagicMock, patch
+
+from src.config import SyncConfig
+from src.core.sync import (
+    SyncManager,
+    is_exclusive_path,
+    parse_author,
+    validate_branch_name,
+)
+from src.git.client import GitResult
 from src.providers.base import Branch
 
 
@@ -81,3 +91,83 @@ def test_branch_model_is_default() -> None:
         is_default=True,
     )
     assert default_branch.is_default is True
+
+
+def test_sync_manager_execute() -> None:
+    # Setup mocks
+    mock_config = MagicMock(spec=SyncConfig)
+    mock_config.bot_name = "bot"
+    mock_config.bot_email = "bot@example.com"
+    mock_config.origin_url = "origin"
+    mock_config.destination_url = "dest"
+    mock_config.branch_mapping = {}
+    mock_config.reverse_branch_mapping = {}
+    mock_config.sync_json_file = "sync.json"
+    mock_config.origin_exclusive_paths = []
+    mock_config.destination_exclusive_paths = []
+    mock_config.origin_token = "token1"
+    mock_config.destination_token = "token2"
+
+    mock_origin = MagicMock()
+    mock_origin.is_repo_disabled.return_value = False
+    mock_origin.get_branches.return_value = [
+        Branch(name="main", remote_ref="origin/main", is_default=True),
+        Branch(name="feature/new", remote_ref="origin/feature/new", is_default=False),
+    ]
+    mock_origin.remote_name = "origin"
+    mock_origin.get_remote_ref = lambda b: f"origin/{b}"
+
+    mock_dest = MagicMock()
+    mock_dest.get_repo_name.return_value = "test-repo"
+    mock_dest.get_authenticated_url.return_value = "auth-dest"
+    mock_dest.get_branches.return_value = [
+        Branch(name="main", remote_ref="dest/main", is_default=True),
+        Branch(name="feature/old", remote_ref="dest/feature/old", is_default=False),
+    ]
+    mock_dest.remote_name = "dest"
+    mock_dest.get_remote_ref = lambda b: f"dest/{b}"
+
+    mock_git = MagicMock()
+
+    def ref_exists_side_effect(ref: str) -> bool:
+        return ref in [
+            "origin/main",
+            "origin/feature/new",
+            "dest/main",
+            "dest/feature/old",
+        ]
+
+    mock_git.ref_exists.side_effect = ref_exists_side_effect
+
+    def merge_base_side_effect(ref1: str, ref2: str) -> bool:
+        # 'main' is fully synced
+        if ref1 == "origin/main" and ref2 == "dest/main":
+            return True
+        return False
+
+    mock_git.merge_base_is_ancestor.side_effect = merge_base_side_effect
+
+    def push_side_effect(remote: str, **kwargs: Any) -> GitResult:
+        if kwargs.get("tags"):
+            return GitResult(0, "", " * [new tag]         v1.0 -> v1.0\n", [])
+        return GitResult(0, "", "", [])
+
+    mock_git.push.side_effect = push_side_effect
+    mock_git.status_porcelain.return_value = []
+    mock_git.cwd = "/tmp/fake-repo"
+
+    with (
+        patch("src.core.sync.Git") as MockGit,
+        patch.object(SyncManager, "_has_exclusive_path_changes", return_value=False),
+        patch.object(SyncManager, "_purge_origin_exclusive_assets"),
+        patch.object(SyncManager, "_resolve_seed_reference", return_value="dest/main"),
+    ):
+        MockGit.return_value = MagicMock()
+        manager = SyncManager(mock_config, mock_origin, mock_dest, mock_git)
+        result = manager.execute()
+
+    assert result.repo_name == "test-repo"
+    assert "main" not in result.synced_branches  # fully synced
+    assert "feature/new" in result.synced_branches  # newly pushed
+    assert "feature/old" in result.removed_branches  # pruned
+    assert "v1.0" in result.synced_tags  # mock parsed from stderr
