@@ -1,4 +1,5 @@
 from src.core.sync import is_exclusive_path, parse_author, validate_branch_name
+from src.providers.base import Branch
 
 
 def test_validate_branch_name() -> None:
@@ -68,3 +69,15 @@ def test_parse_author() -> None:
     name, email = parse_author("", bot_name, bot_email)
     assert name == bot_name
     assert email == bot_email
+
+
+def test_branch_model_is_default() -> None:
+    branch = Branch(name="feature/test", remote_ref="refs/remotes/origin/feature/test")
+    assert branch.is_default is False
+
+    default_branch = Branch(
+        name="main",
+        remote_ref="refs/remotes/origin/main",
+        is_default=True,
+    )
+    assert default_branch.is_default is True

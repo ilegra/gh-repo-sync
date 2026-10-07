@@ -155,31 +155,28 @@ class AzureDevOpsProvider(OriginProvider):
         """
         return f"refs/remotes/{self.remote_name}/{branch_name}"
 
-    def get_default_branch(self) -> Branch:
-        """
-        Returns the default branch of the origin repository.
-
-        Returns:
-            Branch: Default branch instance.
-        """
+    def _get_default_branch_name(self) -> str:
         if not self.git:
-            return Branch(name="main", remote_ref=self.get_remote_ref("main"))
+            return "main"
 
         sym_res = self.git.symbolic_ref(
             f"refs/remotes/{self.remote_name}/HEAD", short=True
         )
-        if sym_res.success and sym_res.stdout:
-            name = sym_res.stdout.removeprefix(f"{self.remote_name}/")
-        else:
-            name = "main"
-        return Branch(name=name, remote_ref=self.get_remote_ref(name))
+        if (
+            sym_res.success
+            and isinstance(sym_res.stdout, str)
+            and sym_res.stdout.strip()
+        ):
+            return sym_res.stdout.strip().removeprefix(f"{self.remote_name}/")
+        return "main"
 
     def get_branches(self) -> list[Branch]:
         """
         Fetches remote references from origin and returns all valid branches.
 
         Returns:
-            list[Branch]: List of valid branch objects available at origin.
+            list[Branch]: List of valid branch objects available at origin,
+                with the default branch indicated via `is_default=True`.
         """
         if not self.git:
             raise RuntimeError("Git client is not initialized for AzureDevOpsProvider")
@@ -193,6 +190,7 @@ class AzureDevOpsProvider(OriginProvider):
                 return []
             fetch_origin.raise_for_status()
 
+        default_branch_name = self._get_default_branch_name()
         prefix = f"refs/remotes/{self.remote_name}/"
         raw_refs = self.git.for_each_ref(prefix)
         branches: list[Branch] = []
@@ -206,6 +204,21 @@ class AzureDevOpsProvider(OriginProvider):
                 )
                 continue
             branches.append(
-                Branch(name=branch_name, remote_ref=f"{prefix}{branch_name}")
+                Branch(
+                    name=branch_name,
+                    remote_ref=f"{prefix}{branch_name}",
+                    is_default=(branch_name == default_branch_name),
+                )
             )
+
+        if branches and not any(b.is_default for b in branches):
+            fallback_index = 0
+            for idx, b in enumerate(branches):
+                if b.name in ("main", "master"):
+                    fallback_index = idx
+                    break
+            branches[fallback_index] = branches[fallback_index].model_copy(
+                update={"is_default": True}
+            )
+
         return branches
