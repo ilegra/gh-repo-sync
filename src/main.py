@@ -1,11 +1,14 @@
 import os
+import shutil
 import sys
+import tempfile
 
 import structlog
 from structlog.types import Processor
 
 from src.config import SyncConfig
 from src.core.sync import SyncManager
+from src.git.client import Git
 from src.providers.azure_devops import AzureDevOpsProvider
 from src.providers.github import GitHubProvider
 
@@ -39,25 +42,39 @@ def main() -> None:
         logger.error("Configuration validation error", error=str(e))
         sys.exit(1)
 
-    # Origin provider factory (Azure DevOps is the currently supported origin)
-    origin_provider = AzureDevOpsProvider(
-        repo_url=config.origin_url,
-        pat=config.origin_token,
-    )
+    # Setup isolated git workspace
+    temp_dir = tempfile.mkdtemp(prefix="repo_sync_")
+    repo_dir = os.path.join(temp_dir, "repo")
+    os.makedirs(repo_dir, exist_ok=True)
 
-    # Destination provider factory (GitHub)
-    destination_provider = GitHubProvider(
-        repo_url=config.destination_url,
-        token=config.destination_token,
-    )
+    try:
+        mask_patterns = [config.origin_token, config.destination_token]
+        git_client = Git(repo_dir, mask_patterns=mask_patterns)
 
-    manager = SyncManager(
-        config=config,
-        origin_provider=origin_provider,
-        destination_provider=destination_provider,
-    )
+        # Origin provider factory (Azure DevOps is the currently supported origin)
+        origin_provider = AzureDevOpsProvider(
+            repo_url=config.origin_url,
+            pat=config.origin_token,
+        )
 
-    result = manager.execute()
+        # Destination provider factory (GitHub)
+        destination_provider = GitHubProvider(
+            repo_url=config.destination_url,
+            token=config.destination_token,
+            git=git_client,
+        )
+
+        manager = SyncManager(
+            config=config,
+            origin_provider=origin_provider,
+            destination_provider=destination_provider,
+            git_client=git_client,
+        )
+
+        result = manager.execute()
+
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
     if result.already_disabled:
         logger.info("Origin repository is disabled. Sync skipped.")
@@ -73,7 +90,6 @@ def main() -> None:
         removed=result.removed_branches,
     )
     sys.exit(0)
-
 
 if __name__ == "__main__":
     main()

@@ -12,9 +12,10 @@ from src.providers.base import DestinationProvider, OriginProvider
 
 
 class LocalTestProvider(OriginProvider, DestinationProvider):
-    def __init__(self, repo_url: str, name: str) -> None:
+    def __init__(self, repo_url: str, name: str, git_client: Git | None = None) -> None:
         self.repo_url = repo_url
         self.name = name
+        self.git = git_client
 
     def get_authenticated_url(self) -> str:
         return self.repo_url
@@ -24,6 +25,23 @@ class LocalTestProvider(OriginProvider, DestinationProvider):
 
     def get_repo_name(self) -> str:
         return self.name
+
+    def commit(
+        self,
+        subject: str,
+        author: str,
+        body: str | None = None,
+        allow_empty: bool = False,
+    ) -> None:
+        if not self.git:
+            raise RuntimeError("Git client not set")
+
+        msg = f"{subject}\n\n{body}" if body else subject
+
+        if self.git.status_porcelain():
+            self.git.commit(msg, author=author)
+        elif allow_empty:
+            self.git.commit(msg, author=author, allow_empty=True)
 
 
 def create_bare_repo(path: str) -> Git:
@@ -111,7 +129,12 @@ def test_integration_new_branch_and_exclusive_paths(
     origin_git.commit("feat: login module", author="Developer Two <dev2@company.com>")
     origin_git.push("origin", "feature/login")
 
-    # 3. Run SyncManager
+    # 3. Setup temporary working directory for SyncManager
+    sync_work = os.path.join(root, "sync_work")
+    os.makedirs(sync_work, exist_ok=True)
+    sync_git = Git(sync_work)
+
+    # 4. Run SyncManager
     config = SyncConfig(
         ORIGIN_URL=origin_url,
         ORIGIN_TOKEN="mock-origin-token",
@@ -120,17 +143,17 @@ def test_integration_new_branch_and_exclusive_paths(
         ORIGIN_EXCLUSIVE_PATHS=".pipeline",
         DESTINATION_EXCLUSIVE_PATHS=".github",
     )
-    origin_prov = LocalTestProvider(origin_url, "origin-repo")
-    dest_prov = LocalTestProvider(dest_url, "dest-repo")
+    origin_prov = LocalTestProvider(origin_url, "origin-repo", sync_git)
+    dest_prov = LocalTestProvider(dest_url, "dest-repo", sync_git)
 
-    manager = SyncManager(config, origin_prov, dest_prov)
+    manager = SyncManager(config, origin_prov, dest_prov, sync_git)
     result = manager.execute()
 
     assert not result.errors
     assert "main" in result.synced_branches
     assert "feature/login" in result.synced_branches
 
-    # 4. Verify Destination State
+    # 5. Verify Destination State
     verify_dir = os.path.join(root, "verify_work")
     helper_git = Git(root)
     helper_git.clone(dest_url, verify_dir)
@@ -187,8 +210,16 @@ def test_integration_fast_forward_and_conflict_resolution(
         DESTINATION_URL=dest_url,
         DESTINATION_TOKEN="mock",
     )
+
+    sync_work1 = os.path.join(root, "sync_work1")
+    os.makedirs(sync_work1, exist_ok=True)
+    sync_git1 = Git(sync_work1)
+
     manager = SyncManager(
-        config, LocalTestProvider(origin_url, "o"), LocalTestProvider(dest_url, "d")
+        config,
+        LocalTestProvider(origin_url, "o", sync_git1),
+        LocalTestProvider(dest_url, "d", sync_git1),
+        sync_git1,
     )
     res = manager.execute()
     assert "main" in res.synced_branches
@@ -217,8 +248,15 @@ def test_integration_fast_forward_and_conflict_resolution(
     base_git.push("origin", "main")
 
     # Run sync again -> 3-way merge should resolve using theirs (Origin's version)
+    sync_work2 = os.path.join(root, "sync_work2")
+    os.makedirs(sync_work2, exist_ok=True)
+    sync_git2 = Git(sync_work2)
+
     manager2 = SyncManager(
-        config, LocalTestProvider(origin_url, "o"), LocalTestProvider(dest_url, "d")
+        config,
+        LocalTestProvider(origin_url, "o", sync_git2),
+        LocalTestProvider(dest_url, "d", sync_git2),
+        sync_git2,
     )
     res2 = manager2.execute()
     assert not res2.errors
@@ -275,8 +313,16 @@ def test_integration_branch_pruning_and_mapping(git_test_env: dict[str, str]) ->
         DESTINATION_TOKEN="mock",
         BRANCH_MAPPING="master:main",
     )
+
+    sync_work3 = os.path.join(root, "sync_work3")
+    os.makedirs(sync_work3, exist_ok=True)
+    sync_git3 = Git(sync_work3)
+
     manager = SyncManager(
-        config, LocalTestProvider(origin_url, "o"), LocalTestProvider(dest_url, "d")
+        config,
+        LocalTestProvider(origin_url, "o", sync_git3),
+        LocalTestProvider(dest_url, "d", sync_git3),
+        sync_git3,
     )
     res = manager.execute()
 
