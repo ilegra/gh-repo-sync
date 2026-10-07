@@ -70,6 +70,39 @@ poetry run ruff check src tests
 poetry run ruff format --check src tests
 poetry run mypy src tests
 
-# Run unit and integration tests
-poetry run pytest -v
+# Run unit tests
+poetry run pytest tests/unit -v
+
+# Run integration tests
+poetry run pytest tests/integration -v
 ```
+
+## Versioning and Release Process
+
+### Canonical Version Definition
+The canonical version of the application is defined in [`pyproject.toml`](pyproject.toml) under `[tool.poetry] version`.
+
+- **Check Current Version:**
+  ```bash
+  poetry version --short
+  # or via the Python API
+  poetry run python -m src.version
+  ```
+- **Bump Version (SemVer):**
+  ```bash
+  # Increment patch, minor, or major version
+  poetry version patch
+  poetry version minor
+  poetry version major
+  ```
+
+### Automated Release Pipeline
+When code is integrated via GitHub Actions:
+1. **Pull Requests:** `lint`, `unit-tests`, and `integration-tests` run concurrently in parallel to validate proposed changes.
+2. **Main Branch:** Upon merging into `main`, the identical checks run in parallel again to verify the integrated state.
+3. **Automated Release & Tagging:** If all verification jobs pass:
+   - The pipeline resolves the canonical application version from `pyproject.toml`.
+   - If the tag `v<version>` does not yet exist, it analyzes the commit history since the previous tag using Conventional Commits.
+   - It generates structured release notes categorized into Features, Bug Fixes, Improvements, and Pull Requests.
+   - It creates the Git tag and publishes a new GitHub Release.
+
