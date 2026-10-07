@@ -13,6 +13,7 @@ logger = structlog.get_logger(__name__)
 
 
 def validate_branch_name(branch: str, git: Git | None = None) -> bool:
+    """Validates whether a branch name is safe and valid."""
     if not branch or branch.startswith("-"):
         return False
     # Reject unsafe characters not conforming to safe branch regex
@@ -26,6 +27,7 @@ def validate_branch_name(branch: str, git: Git | None = None) -> bool:
 
 
 def is_exclusive_path(target_path: str, exclusive_paths: list[str]) -> bool:
+    """Checks if target_path matches any exclusive path or pattern."""
     target_clean = target_path.strip()
     if target_clean.startswith("./"):
         target_clean = target_clean[2:]
@@ -50,6 +52,7 @@ def is_exclusive_path(target_path: str, exclusive_paths: list[str]) -> bool:
 def parse_author(
     log_output: str, default_name: str, default_email: str
 ) -> tuple[str, str]:
+    """Parses author name and email from git log tab-separated format."""
     if not log_output or "\t" not in log_output:
         return default_name, default_email
 
@@ -63,6 +66,8 @@ def parse_author(
 
 
 class SyncManager:
+    """Manages repository sync between origin and destination."""
+
     def __init__(
         self,
         config: SyncConfig,
@@ -88,15 +93,16 @@ class SyncManager:
 
     @property
     def git_client(self) -> Git:
+        """Returns the underlying Git client instance."""
         return self.git
 
-    def resolve_origin_author(self, ref: str) -> tuple[str, str]:
+    def _resolve_origin_author(self, ref: str) -> tuple[str, str]:
         if not self.git or not self.git.ref_exists(ref):
             return self.config.bot_name, self.config.bot_email
         output = self.git.log_one(ref, "%an%x09%ae")
         return parse_author(output, self.config.bot_name, self.config.bot_email)
 
-    def protect_destination_exclusive_assets(self, base_ref: str = "HEAD") -> None:
+    def _protect_destination_exclusive_assets(self, base_ref: str = "HEAD") -> None:
         if not self.git:
             return
         repo_root = self.git.cwd
@@ -132,7 +138,7 @@ class SyncManager:
                         os.remove(full_path)
                     self.git.rm([clean_path], cached=True, rf=True)
 
-    def purge_origin_exclusive_assets(self) -> None:
+    def _purge_origin_exclusive_assets(self) -> None:
         if not self.git:
             return
         repo_root = self.git.cwd
@@ -190,7 +196,7 @@ class SyncManager:
                     else:
                         os.remove(full_path)
 
-    def has_exclusive_path_changes(self, dest_ref: str, origin_ref: str) -> bool:
+    def _has_exclusive_path_changes(self, dest_ref: str, origin_ref: str) -> bool:
         if not self.git:
             return False
         changed_files = self.git.diff(dest_ref, origin_ref, name_only=True)
@@ -202,7 +208,7 @@ class SyncManager:
                 return True
         return False
 
-    def resolve_non_exclusive_conflicts(self) -> None:
+    def _resolve_non_exclusive_conflicts(self) -> None:
         if not self.git:
             return
         unmerged = self.git.diff(name_only=True, diff_filter="U")
@@ -214,7 +220,7 @@ class SyncManager:
                 self.git.checkout(file, theirs=True, paths=[file])
                 self.git.add([file])
 
-    def validate_post_merge_state(self, branch: str) -> None:
+    def _validate_post_merge_state(self, branch: str) -> None:
         if not self.git:
             return
         unresolved = self.git.ls_files(unmerged=True)
@@ -224,7 +230,7 @@ class SyncManager:
                 + "\n".join(unresolved)
             )
 
-    def resolve_seed_reference(self, target_branch: str) -> str:
+    def _resolve_seed_reference(self, target_branch: str) -> str:
         if not self.git:
             return "HEAD"
         dest_branch_ref = f"{self.destination_remote}/{target_branch}"
@@ -235,7 +241,7 @@ class SyncManager:
             return dest_default_ref
         return "HEAD"
 
-    def setup_environment(self) -> bool:
+    def _setup_environment(self) -> bool:
         logger.info("Step 1: Setting up environment and remotes")
 
         if self.origin_provider.is_repo_disabled():
@@ -325,21 +331,21 @@ class SyncManager:
         )
         return True
 
-    def sync_new_branch(self, dest_branch: str, origin_ref: str) -> None:
+    def _sync_new_branch(self, dest_branch: str, origin_ref: str) -> None:
         assert self.git is not None
         logger.info("Creating new branch on destination", branch=dest_branch)
         self.git.checkout(dest_branch, base_ref=origin_ref, create=True)
 
-        seed_ref = self.resolve_seed_reference(dest_branch)
+        seed_ref = self._resolve_seed_reference(dest_branch)
         if self.git.ref_exists(seed_ref):
             logger.info(
                 "Applying exclusive asset seed", seed_ref=seed_ref, branch=dest_branch
             )
-            self.protect_destination_exclusive_assets(seed_ref)
+            self._protect_destination_exclusive_assets(seed_ref)
 
-        self.purge_origin_exclusive_assets()
+        self._purge_origin_exclusive_assets()
 
-        author_name, author_email = self.resolve_origin_author(origin_ref)
+        author_name, author_email = self._resolve_origin_author(origin_ref)
         self.git.add(all_files=True)
 
         if self.git.status_porcelain():
@@ -370,17 +376,17 @@ class SyncManager:
                 "Failed to push new branch", branch=dest_branch, stderr=push_res.stderr
             )
 
-    def perform_fast_forward_sync(
+    def _perform_fast_forward_sync(
         self, dest_branch: str, origin_ref: str, dest_ref: str
     ) -> None:
         assert self.git is not None
         logger.info("Performing fast-forward sync", branch=dest_branch)
         self.git.checkout(dest_branch, base_ref=origin_ref, create=True)
 
-        self.protect_destination_exclusive_assets(dest_ref)
-        self.purge_origin_exclusive_assets()
+        self._protect_destination_exclusive_assets(dest_ref)
+        self._purge_origin_exclusive_assets()
 
-        author_name, author_email = self.resolve_origin_author(origin_ref)
+        author_name, author_email = self._resolve_origin_author(origin_ref)
         origin_subject = (
             self.git.log_one(origin_ref, "%s") or "sync changes from origin"
         )
@@ -409,14 +415,14 @@ class SyncManager:
                 "Fast-forward push failed", branch=dest_branch, stderr=push_res.stderr
             )
 
-    def perform_three_way_merge_sync(
+    def _perform_three_way_merge_sync(
         self, dest_branch: str, origin_ref: str, dest_ref: str
     ) -> None:
         assert self.git is not None
         logger.info("Performing 3-way merge sync", branch=dest_branch)
         self.git.checkout(dest_branch, base_ref=dest_ref, create=True)
 
-        author_name, author_email = self.resolve_origin_author(origin_ref)
+        author_name, author_email = self._resolve_origin_author(origin_ref)
         origin_subject = (
             self.git.log_one(origin_ref, "%s") or "sync changes from origin"
         )
@@ -431,13 +437,13 @@ class SyncManager:
             no_commit=True,
             allow_unrelated_histories=True,
         )
-        self.resolve_non_exclusive_conflicts()
+        self._resolve_non_exclusive_conflicts()
 
-        seed_ref = self.resolve_seed_reference(dest_branch)
-        self.protect_destination_exclusive_assets(seed_ref)
-        self.purge_origin_exclusive_assets()
+        seed_ref = self._resolve_seed_reference(dest_branch)
+        self._protect_destination_exclusive_assets(seed_ref)
+        self._purge_origin_exclusive_assets()
 
-        self.validate_post_merge_state(dest_branch)
+        self._validate_post_merge_state(dest_branch)
         self.git.add(all_files=True)
 
         if self.git.status_porcelain():
@@ -464,7 +470,7 @@ class SyncManager:
                 "3-way merge push failed", branch=dest_branch, stderr=push_res.stderr
             )
 
-    def process_branch_sync(self, origin_branch: str) -> None:
+    def _process_branch_sync(self, origin_branch: str) -> None:
         assert self.git is not None
         if not validate_branch_name(origin_branch, self.git):
             return
@@ -486,7 +492,7 @@ class SyncManager:
 
         # Case 1: Branch does not exist on destination
         if not self.git.ref_exists(dest_ref):
-            self.sync_new_branch(dest_branch, origin_ref)
+            self._sync_new_branch(dest_branch, origin_ref)
             return
 
         # Case 2: Destination already has all commits from origin
@@ -501,20 +507,20 @@ class SyncManager:
 
         # Case 3: Safe fast-forward (no changes in exclusive paths and
         # destination is ancestor of origin)
-        if not self.has_exclusive_path_changes(
+        if not self._has_exclusive_path_changes(
             dest_ref, origin_ref
         ) and self.git.merge_base_is_ancestor(dest_ref, origin_ref):
-            self.perform_fast_forward_sync(dest_branch, origin_ref, dest_ref)
+            self._perform_fast_forward_sync(dest_branch, origin_ref, dest_ref)
         else:
             # Case 4: 3-way merge
-            self.perform_three_way_merge_sync(dest_branch, origin_ref, dest_ref)
+            self._perform_three_way_merge_sync(dest_branch, origin_ref, dest_ref)
 
-    def sync_branches(self) -> None:
+    def _sync_branches(self) -> None:
         logger.info("Step 2: Syncing branches from Origin to Destination")
         for branch in self.origin_branches:
-            self.process_branch_sync(branch)
+            self._process_branch_sync(branch)
 
-    def prune_deleted_origin_branches(self) -> None:
+    def _prune_deleted_origin_branches(self) -> None:
         assert self.git is not None
         logger.info(
             "Step 3: Checking for deleted branches on Origin to prune on Destination"
@@ -551,7 +557,7 @@ class SyncManager:
                         "Failed to delete branch on destination", branch=dest_branch
                     )
 
-    def sync_tags(self) -> None:
+    def _sync_tags(self) -> None:
         assert self.git is not None
         logger.info("Step 4: Syncing tags")
         push_tags = self.git.push(self.destination_remote, tags=True)
@@ -560,7 +566,8 @@ class SyncManager:
             logger.error("Failed to push tags", stderr=push_tags.stderr)
 
     def execute(self) -> SyncResult:
-        active = self.setup_environment()
+        """Executes repository synchronization and returns the final SyncResult."""
+        active = self._setup_environment()
         if not active:
             res = SyncResult(
                 repo_name=self.destination_provider.get_repo_name(),
@@ -571,9 +578,9 @@ class SyncManager:
             res.write_to_file(self.config.sync_json_file)
             return res
 
-        self.sync_branches()
-        self.prune_deleted_origin_branches()
-        self.sync_tags()
+        self._sync_branches()
+        self._prune_deleted_origin_branches()
+        self._sync_tags()
 
         res = SyncResult(
             repo_name=self.destination_provider.get_repo_name(),

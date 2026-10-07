@@ -5,6 +5,8 @@ from src.providers.base import DestinationProvider
 
 
 class GitHubProvider(DestinationProvider):
+    """Destination repository provider implementation for GitHub."""
+
     def __init__(self, repo_url: str, token: str, git: Git):
         """
         Initializes the GitHub Provider.
@@ -19,6 +21,7 @@ class GitHubProvider(DestinationProvider):
         self.git = git
 
     def get_authenticated_url(self) -> str:
+        """Returns the destination remote git URL with authentication credentials."""
         clean_url = self.repo_url
         if clean_url.startswith("https://"):
             clean_url = clean_url[len("https://") :]
@@ -27,6 +30,7 @@ class GitHubProvider(DestinationProvider):
         return f"https://x-access-token:{self.token}@{clean_url}"
 
     def get_repo_name(self) -> str:
+        """Returns the base repository name."""
         clean = self.repo_url.rstrip("/").removesuffix(".git")
         return clean.split("/")[-1]
 

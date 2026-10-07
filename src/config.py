@@ -6,6 +6,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class SyncConfig(BaseSettings):
+    """Configuration settings for repository synchronization engine."""
+
     origin_url: str = Field(..., validation_alias="ORIGIN_URL")
     origin_token: str = Field(..., validation_alias="ORIGIN_TOKEN")
     destination_url: str = Field(..., validation_alias="DESTINATION_URL")
@@ -35,7 +37,7 @@ class SyncConfig(BaseSettings):
 
     @model_validator(mode="before")
     @classmethod
-    def populate_legacy_aliases(cls, data: dict[str, Any]) -> dict[str, Any]:
+    def _populate_legacy_aliases(cls, data: dict[str, Any]) -> dict[str, Any]:
         # Support fallback environment variables matching the original script
         aliases = {
             "origin_url": ["ORIGIN_URL", "ADO_URL", "ADO_REPO_URL"],
@@ -69,6 +71,7 @@ class SyncConfig(BaseSettings):
 
     @property
     def origin_exclusive_paths(self) -> list[str]:
+        """List of origin paths that should be purged or excluded on the destination."""
         defaults = [
             ".pipeline",
             ".pipelines",
@@ -90,6 +93,7 @@ class SyncConfig(BaseSettings):
 
     @property
     def destination_exclusive_paths(self) -> list[str]:
+        """List of destination paths preserved from the destination seed."""
         defaults = [".github"]
         custom = []
         if self.destination_exclusive_paths_raw:
@@ -133,6 +137,8 @@ class SyncConfig(BaseSettings):
 
 
 class SyncResult(BaseModel):
+    """Result data transfer object for repository synchronization runs."""
+
     repo_name: str
     origin_repo: str
     destination_repo: str
@@ -142,6 +148,7 @@ class SyncResult(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
     def write_to_file(self, filename: str) -> None:
+        """Serializes sync execution results to a JSON file."""
         dirname = os.path.dirname(filename)
         if dirname:
             os.makedirs(dirname, exist_ok=True)

@@ -13,7 +13,7 @@ from src.providers.azure_devops import AzureDevOpsProvider
 from src.providers.github import GitHubProvider
 
 
-def setup_logging() -> None:
+def _setup_logging() -> None:
     is_github_actions = bool(os.getenv("GITHUB_ACTIONS"))
     processors: list[Processor] = [
         structlog.contextvars.merge_contextvars,
@@ -33,7 +33,8 @@ def setup_logging() -> None:
 
 
 def main() -> None:
-    setup_logging()
+    """CLI entrypoint for repository synchronization execution."""
+    _setup_logging()
     logger = structlog.get_logger(__name__)
 
     try:

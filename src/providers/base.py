@@ -2,6 +2,8 @@ from abc import ABC, abstractmethod
 
 
 class OriginProvider(ABC):
+    """Abstract interface representing an origin repository provider."""
+
     @abstractmethod
     def get_authenticated_url(self) -> str:
         """Returns the origin remote git URL with authentication credentials."""
@@ -19,6 +21,8 @@ class OriginProvider(ABC):
 
 
 class DestinationProvider(ABC):
+    """Abstract interface representing a destination repository provider."""
+
     @abstractmethod
     def get_authenticated_url(self) -> str:
         """Returns the destination remote git URL with authentication credentials."""

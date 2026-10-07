@@ -13,6 +13,8 @@ logger = structlog.get_logger(__name__)
 
 
 class AzureDevOpsProvider(OriginProvider):
+    """Origin repository provider implementation for Azure DevOps."""
+
     def __init__(self, repo_url: str, pat: str):
         self.repo_url = repo_url
         self.pat = pat
@@ -34,6 +36,7 @@ class AzureDevOpsProvider(OriginProvider):
         return self._session
 
     def get_authenticated_url(self) -> str:
+        """Returns the origin remote git URL with authentication credentials."""
         clean_url = self.repo_url
         if clean_url.startswith("https://"):
             clean_url = clean_url[len("https://") :]
@@ -42,6 +45,7 @@ class AzureDevOpsProvider(OriginProvider):
         return f"https://anything:{self.pat}@{clean_url}"
 
     def get_repo_name(self) -> str:
+        """Returns the base repository name."""
         clean = self.repo_url.rstrip("/").removesuffix(".git")
         return clean.split("/")[-1]
 
@@ -66,6 +70,7 @@ class AzureDevOpsProvider(OriginProvider):
         return None
 
     def is_repo_disabled(self) -> bool:
+        """Checks if the origin Azure DevOps repository is disabled or archived."""
         parsed = self._parse_ado_url()
         if not parsed:
             logger.debug(
