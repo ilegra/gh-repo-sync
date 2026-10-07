@@ -1,5 +1,5 @@
 name: 'Multi-Platform Git Sync'
-description: 'Synchronizes repositories from an Origin (Azure DevOps, etc.) to Destination (GitHub), maintaining commit authors and filtering exclusive paths'
+description: 'Automated multi-platform Git repository synchronization with author preservation and path filtering'
 author: 'ilegra'
 branding:
   icon: 'git-merge'
