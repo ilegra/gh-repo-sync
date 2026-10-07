@@ -18,6 +18,8 @@ from src.providers.base import (
 
 logger = structlog.get_logger(__name__)
 
+_TAG_PUSH_PATTERN = re.compile(r"\* \[new tag\]\s+\S+\s+->\s+(\S+)")
+
 
 def is_exclusive_path(target_path: str, exclusive_paths: list[str]) -> bool:
     """Checks if target_path matches any exclusive path or pattern."""
@@ -229,8 +231,9 @@ class SyncManager:
             return dest_default_ref
         return "HEAD"
 
+    @staticmethod
     def _determine_default_branch(
-        self, destination_branches: list[Branch], origin_branches: list[Branch]
+        destination_branches: list[Branch], origin_branches: list[Branch]
     ) -> str:
         for branch in destination_branches:
             if branch.is_default:
@@ -240,12 +243,14 @@ class SyncManager:
                 return branch.name
         return "main"
 
-    def _setup_environment(self) -> tuple[bool, list[Branch], list[Branch], str]:
+    def _setup_environment(
+        self,
+    ) -> tuple[list[Branch], list[Branch], str] | None:
         logger.info("Step 1: Setting up environment and remotes")
 
         if self.origin_provider.is_repo_disabled():
             logger.warning("Origin repository is marked as disabled or archived.")
-            return False, [], [], "main"
+            return None
 
         repo_dir = self.git.cwd
         mask_patterns = [self.config.origin_token, self.config.destination_token]
@@ -265,7 +270,7 @@ class SyncManager:
         origin_branches = self.origin_provider.get_branches()
         if not origin_branches and self.origin_provider.is_repo_disabled():
             logger.warning("Origin repository is disabled.")
-            return False, [], [], "main"
+            return None
 
         destination_branches = self.destination_provider.get_branches()
         default_branch = self._determine_default_branch(
@@ -282,7 +287,18 @@ class SyncManager:
             dest_count=len(destination_branches),
             dest_branches=[b.name for b in destination_branches],
         )
-        return True, origin_branches, destination_branches, default_branch
+        return origin_branches, destination_branches, default_branch
+
+    def _push_branch(
+        self, dest_branch: str, success_msg: str, error_msg: str
+    ) -> tuple[str | None, str | None]:
+        assert self.git is not None
+        push_res = self.git.push(self.destination_remote, ref=dest_branch)
+        if push_res.success:
+            logger.info(success_msg, branch=dest_branch)
+            return dest_branch, None
+        logger.error(error_msg, branch=dest_branch, stderr=push_res.stderr)
+        return None, f"Push failed for branch `{dest_branch}`"
 
     def _sync_new_branch(
         self, dest_branch: str, origin_ref: str, default_branch: str
@@ -319,18 +335,11 @@ class SyncManager:
                 allow_empty=True,
             )
 
-        push_res = self.git.push(self.destination_remote, ref=dest_branch)
-        if push_res.success:
-            logger.info(
-                "New branch successfully synced to destination", branch=dest_branch
-            )
-            return dest_branch, None
-        else:
-            error_msg = f"Push failed for branch `{dest_branch}`"
-            logger.error(
-                "Failed to push new branch", branch=dest_branch, stderr=push_res.stderr
-            )
-            return None, error_msg
+        return self._push_branch(
+            dest_branch,
+            "New branch successfully synced to destination",
+            "Failed to push new branch",
+        )
 
     def _perform_fast_forward_sync(
         self, dest_branch: str, origin_ref: str, dest_ref: str
@@ -361,16 +370,9 @@ class SyncManager:
                 allow_empty=True,
             )
 
-        push_res = self.git.push(self.destination_remote, ref=dest_branch)
-        if push_res.success:
-            logger.info("Fast-forward push succeeded", branch=dest_branch)
-            return dest_branch, None
-        else:
-            error_msg = f"Push failed for branch `{dest_branch}`"
-            logger.error(
-                "Fast-forward push failed", branch=dest_branch, stderr=push_res.stderr
-            )
-            return None, error_msg
+        return self._push_branch(
+            dest_branch, "Fast-forward push succeeded", "Fast-forward push failed"
+        )
 
     def _perform_three_way_merge_sync(
         self, dest_branch: str, origin_ref: str, dest_ref: str, default_branch: str
@@ -417,16 +419,9 @@ class SyncManager:
                 allow_empty=True,
             )
 
-        push_res = self.git.push(self.destination_remote, ref=dest_branch)
-        if push_res.success:
-            logger.info("3-way merge push succeeded", branch=dest_branch)
-            return dest_branch, None
-        else:
-            error_msg = f"Push failed for branch `{dest_branch}`"
-            logger.error(
-                "3-way merge push failed", branch=dest_branch, stderr=push_res.stderr
-            )
-            return None, error_msg
+        return self._push_branch(
+            dest_branch, "3-way merge push succeeded", "3-way merge push failed"
+        )
 
     def _process_branch_sync(
         self, origin_branch: Branch, default_branch: str
@@ -506,11 +501,12 @@ class SyncManager:
 
         for dest_branch in destination_branches:
             dest_branch_name = dest_branch.name
-            if not validate_branch_name(dest_branch_name, self.git):
-                continue
 
             # NEVER prune the destination default branch
             if dest_branch.is_default or dest_branch_name == default_branch:
+                continue
+
+            if not validate_branch_name(dest_branch_name, self.git):
                 continue
 
             # Determine corresponding origin branch name
@@ -550,22 +546,16 @@ class SyncManager:
             sync_errors.append("Push failed for tags")
             logger.error("Failed to push tags", stderr=push_tags.stderr)
         else:
-            # Parse output for pushed tags
             # stderr format: " * [new tag]         v1.0.0 -> v1.0.0"
-            for line in push_tags.stderr.splitlines():
-                match = re.search(r"\* \[new tag\]\s+\S+\s+->\s+(\S+)", line)
-                if match:
-                    synced_tags.append(match.group(1))
+            synced_tags = _TAG_PUSH_PATTERN.findall(push_tags.stderr)
 
         return synced_tags, sync_errors
 
     def execute(self) -> SyncResult:
         """Executes repository synchronization and returns the final SyncResult."""
-        active, origin_branches, destination_branches, default_branch = (
-            self._setup_environment()
-        )
-        if not active:
-            res: SyncResult = SyncResult(
+        env = self._setup_environment()
+        if env is None:
+            res = SyncResult(
                 repo_name=self.destination_provider.get_repo_name(),
                 origin_repo=self.config.origin_url,
                 destination_repo=self.config.destination_url,
@@ -574,24 +564,20 @@ class SyncManager:
             res.write_to_file(self.config.sync_json_file)
             return res
 
-        synced_branches: list[str]
-        branch_errors: list[str]
+        origin_branches, destination_branches, default_branch = env
+
         synced_branches, branch_errors = self._sync_branches(
             origin_branches=origin_branches, default_branch=default_branch
         )
 
-        removed_branches: list[str]
-        prune_errors: list[str]
         removed_branches, prune_errors = self._prune_deleted_origin_branches(
             destination_branches=destination_branches,
             default_branch=default_branch,
         )
 
-        synced_tags: list[str]
-        tag_errors: list[str]
         synced_tags, tag_errors = self._sync_tags()
 
-        all_errors: list[str] = branch_errors + prune_errors + tag_errors
+        all_errors = branch_errors + prune_errors + tag_errors
 
         res = SyncResult(
             repo_name=self.destination_provider.get_repo_name(),

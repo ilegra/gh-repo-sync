@@ -94,19 +94,14 @@ def test_branch_model_is_default() -> None:
 
 
 def test_sync_manager_execute() -> None:
-    # Setup mocks
-    mock_config = MagicMock(spec=SyncConfig)
-    mock_config.bot_name = "bot"
-    mock_config.bot_email = "bot@example.com"
-    mock_config.origin_url = "origin"
-    mock_config.destination_url = "dest"
-    mock_config.branch_mapping = {}
-    mock_config.reverse_branch_mapping = {}
-    mock_config.sync_json_file = "sync.json"
-    mock_config.origin_exclusive_paths = []
-    mock_config.destination_exclusive_paths = []
-    mock_config.origin_token = "token1"
-    mock_config.destination_token = "token2"
+    config = SyncConfig(
+        ORIGIN_URL="origin",
+        ORIGIN_TOKEN="token1",
+        DESTINATION_URL="dest",
+        DESTINATION_TOKEN="token2",
+        BOT_NAME="bot",
+        BOT_EMAIL="bot@example.com",
+    )
 
     mock_origin = MagicMock()
     mock_origin.is_repo_disabled.return_value = False
@@ -163,7 +158,7 @@ def test_sync_manager_execute() -> None:
         patch.object(SyncManager, "_resolve_seed_reference", return_value="dest/main"),
     ):
         MockGit.return_value = MagicMock()
-        manager = SyncManager(mock_config, mock_origin, mock_dest, mock_git)
+        manager = SyncManager(config, mock_origin, mock_dest, mock_git)
         result = manager.execute()
 
     assert result.repo_name == "test-repo"
@@ -179,12 +174,6 @@ def test_sync_manager_execute() -> None:
 
 
 def test_determine_default_branch() -> None:
-    mock_config = MagicMock(spec=SyncConfig)
-    mock_origin = MagicMock()
-    mock_dest = MagicMock()
-    mock_git = MagicMock()
-    manager = SyncManager(mock_config, mock_origin, mock_dest, mock_git)
-
     dest_branches = [
         Branch(name="main", remote_ref="dest/main", is_default=True),
         Branch(name="dev", remote_ref="dest/dev", is_default=False),
@@ -192,13 +181,18 @@ def test_determine_default_branch() -> None:
     origin_branches = [
         Branch(name="master", remote_ref="origin/master", is_default=True),
     ]
-    assert manager._determine_default_branch(dest_branches, origin_branches) == "main"
+    assert (
+        SyncManager._determine_default_branch(dest_branches, origin_branches)
+        == "main"
+    )
 
     dest_branches_no_default = [
         Branch(name="dev", remote_ref="dest/dev", is_default=False),
     ]
     assert (
-        manager._determine_default_branch(dest_branches_no_default, origin_branches)
+        SyncManager._determine_default_branch(
+            dest_branches_no_default, origin_branches
+        )
         == "master"
     )
 
@@ -206,7 +200,7 @@ def test_determine_default_branch() -> None:
         Branch(name="feat", remote_ref="origin/feat", is_default=False),
     ]
     assert (
-        manager._determine_default_branch(
+        SyncManager._determine_default_branch(
             dest_branches_no_default, origin_branches_no_default
         )
         == "main"
