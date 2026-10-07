@@ -1,5 +1,6 @@
 import os
-from typing import Dict, List, Optional
+from typing import Any
+
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -10,12 +11,19 @@ class SyncConfig(BaseSettings):
     destination_url: str = Field(..., validation_alias="DESTINATION_URL")
     destination_token: str = Field(..., validation_alias="DESTINATION_TOKEN")
 
-    origin_exclusive_paths_raw: str = Field("", validation_alias="ORIGIN_EXCLUSIVE_PATHS")
-    destination_exclusive_paths_raw: str = Field("", validation_alias="DESTINATION_EXCLUSIVE_PATHS")
+    origin_exclusive_paths_raw: str = Field(
+        "", validation_alias="ORIGIN_EXCLUSIVE_PATHS"
+    )
+    destination_exclusive_paths_raw: str = Field(
+        "", validation_alias="DESTINATION_EXCLUSIVE_PATHS"
+    )
     branch_mapping_raw: str = Field("", validation_alias="BRANCH_MAPPING")
 
     bot_name: str = Field("gh-organization-cerc-com[bot]", validation_alias="BOT_NAME")
-    bot_email: str = Field("gh-organization-cerc-com[bot]@users.noreply.github.com", validation_alias="BOT_EMAIL")
+    bot_email: str = Field(
+        "gh-organization-cerc-com[bot]@users.noreply.github.com",
+        validation_alias="BOT_EMAIL",
+    )
     sync_json_file: str = Field("sync.json", validation_alias="SYNC_JSON_FILE")
 
     model_config = SettingsConfigDict(
@@ -27,15 +35,23 @@ class SyncConfig(BaseSettings):
 
     @model_validator(mode="before")
     @classmethod
-    def populate_legacy_aliases(cls, data: dict):
+    def populate_legacy_aliases(cls, data: dict[str, Any]) -> dict[str, Any]:
         # Support fallback environment variables matching the original script
         aliases = {
             "origin_url": ["ORIGIN_URL", "ADO_URL", "ADO_REPO_URL"],
             "origin_token": ["ORIGIN_TOKEN", "ADO_PAT", "ORIGIN_PAT"],
             "destination_url": ["DESTINATION_URL", "GH_URL", "GH_REPO_URL"],
             "destination_token": ["DESTINATION_TOKEN", "GH_TOKEN"],
-            "origin_exclusive_paths_raw": ["ORIGIN_EXCLUSIVE_PATHS", "ADO_EXCLUSIVE_PATHS", "ADO_EXCLUSIVE_PATHS_RAW"],
-            "destination_exclusive_paths_raw": ["DESTINATION_EXCLUSIVE_PATHS", "GH_EXCLUSIVE_PATHS", "GH_EXCLUSIVE_PATHS_RAW"],
+            "origin_exclusive_paths_raw": [
+                "ORIGIN_EXCLUSIVE_PATHS",
+                "ADO_EXCLUSIVE_PATHS",
+                "ADO_EXCLUSIVE_PATHS_RAW",
+            ],
+            "destination_exclusive_paths_raw": [
+                "DESTINATION_EXCLUSIVE_PATHS",
+                "GH_EXCLUSIVE_PATHS",
+                "GH_EXCLUSIVE_PATHS_RAW",
+            ],
             "branch_mapping_raw": ["BRANCH_MAPPING", "BRANCH_MAPPINGS"],
             "bot_name": ["BOT_NAME", "DEFAULT_BOT_NAME"],
             "bot_email": ["BOT_EMAIL", "DEFAULT_BOT_EMAIL"],
@@ -52,8 +68,13 @@ class SyncConfig(BaseSettings):
         return res
 
     @property
-    def origin_exclusive_paths(self) -> List[str]:
-        defaults = [".pipeline", ".pipelines", "azure-pipelines*.yml", "azure-pipelines*.yaml"]
+    def origin_exclusive_paths(self) -> list[str]:
+        defaults = [
+            ".pipeline",
+            ".pipelines",
+            "azure-pipelines*.yml",
+            "azure-pipelines*.yaml",
+        ]
         custom = []
         if self.origin_exclusive_paths_raw:
             for item in self.origin_exclusive_paths_raw.split(","):
@@ -68,7 +89,7 @@ class SyncConfig(BaseSettings):
         return combined
 
     @property
-    def destination_exclusive_paths(self) -> List[str]:
+    def destination_exclusive_paths(self) -> list[str]:
         defaults = [".github"]
         custom = []
         if self.destination_exclusive_paths_raw:
@@ -83,12 +104,12 @@ class SyncConfig(BaseSettings):
         return combined
 
     @property
-    def branch_mapping(self) -> Dict[str, str]:
+    def branch_mapping(self) -> dict[str, str]:
         """
         Parses BRANCH_MAPPING string (format: 'origin_branch:dest_branch,master:main')
         into a dict: {'master': 'main'}
         """
-        mapping: Dict[str, str] = {}
+        mapping: dict[str, str] = {}
         if not self.branch_mapping_raw:
             return mapping
         for pair in self.branch_mapping_raw.split(","):
@@ -104,7 +125,7 @@ class SyncConfig(BaseSettings):
         return mapping
 
     @property
-    def reverse_branch_mapping(self) -> Dict[str, str]:
+    def reverse_branch_mapping(self) -> dict[str, str]:
         """
         Reverses branch_mapping: {destination_branch: origin_branch}
         """
@@ -115,12 +136,12 @@ class SyncResult(BaseModel):
     repo_name: str
     origin_repo: str
     destination_repo: str
-    synced_branches: List[str] = Field(default_factory=list)
-    removed_branches: List[str] = Field(default_factory=list)
+    synced_branches: list[str] = Field(default_factory=list)
+    removed_branches: list[str] = Field(default_factory=list)
     already_disabled: bool = False
-    errors: List[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
 
-    def write_to_file(self, filename: str):
+    def write_to_file(self, filename: str) -> None:
         dirname = os.path.dirname(filename)
         if dirname:
             os.makedirs(dirname, exist_ok=True)

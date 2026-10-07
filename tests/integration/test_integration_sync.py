@@ -1,6 +1,8 @@
 import os
 import shutil
 import tempfile
+from collections.abc import Generator
+
 import pytest
 
 from src.config import SyncConfig
@@ -10,7 +12,7 @@ from src.providers.base import DestinationProvider, OriginProvider
 
 
 class LocalTestProvider(OriginProvider, DestinationProvider):
-    def __init__(self, repo_url: str, name: str):
+    def __init__(self, repo_url: str, name: str) -> None:
         self.repo_url = repo_url
         self.name = name
 
@@ -42,7 +44,7 @@ def create_seed_repo(bare_url: str, work_dir: str) -> Git:
 
 
 @pytest.fixture
-def git_test_env():
+def git_test_env() -> Generator[dict[str, str], None, None]:
     temp_dir = tempfile.mkdtemp(prefix="sync_integration_")
     origin_bare = os.path.join(temp_dir, "origin.git")
     dest_bare = os.path.join(temp_dir, "destination.git")
@@ -61,11 +63,13 @@ def git_test_env():
     shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-def test_integration_new_branch_and_exclusive_paths(git_test_env):
+def test_integration_new_branch_and_exclusive_paths(
+    git_test_env: dict[str, str],
+) -> None:
     """
     Scenario 1 & 4:
-    Origin has a new branch with application code and origin-exclusive paths (.pipeline).
-    Destination has .github/workflow.yml.
+    Origin has a new branch with application code and origin-exclusive
+    paths (.pipeline). Destination has .github/workflow.yml.
     Verify Destination receives branch, retains .github, and purges .pipeline.
     """
     root = git_test_env["root"]
@@ -84,7 +88,8 @@ def test_integration_new_branch_and_exclusive_paths(git_test_env):
     dest_git.commit("initial destination commit")
     dest_git.push("origin", "main")
 
-    # 2. Setup Origin with a feature branch containing app code and origin-exclusive .pipeline
+    # 2. Setup Origin with a feature branch containing app code
+    # and origin-exclusive .pipeline
     origin_work = os.path.join(root, "origin_work")
     origin_git = create_seed_repo(origin_url, origin_work)
     with open(os.path.join(origin_work, "app.py"), "w") as f:
@@ -93,7 +98,9 @@ def test_integration_new_branch_and_exclusive_paths(git_test_env):
     with open(os.path.join(origin_work, ".pipeline", "azure-pipelines.yml"), "w") as f:
         f.write("pipeline: build\n")
     origin_git.add(all_files=True)
-    origin_git.commit("feat: add app and pipeline", author="Developer One <dev1@company.com>")
+    origin_git.commit(
+        "feat: add app and pipeline", author="Developer One <dev1@company.com>"
+    )
     origin_git.push("origin", "main")
 
     # Create feature branch in origin
@@ -142,7 +149,9 @@ def test_integration_new_branch_and_exclusive_paths(git_test_env):
     assert not os.path.exists(os.path.join(verify_dir, ".pipeline"))
 
 
-def test_integration_fast_forward_and_conflict_resolution(git_test_env):
+def test_integration_fast_forward_and_conflict_resolution(
+    git_test_env: dict[str, str],
+) -> None:
     """
     Scenario 2 & 3:
     - Linear Fast-Forward test.
@@ -178,7 +187,9 @@ def test_integration_fast_forward_and_conflict_resolution(git_test_env):
         DESTINATION_URL=dest_url,
         DESTINATION_TOKEN="mock",
     )
-    manager = SyncManager(config, LocalTestProvider(origin_url, "o"), LocalTestProvider(dest_url, "d"))
+    manager = SyncManager(
+        config, LocalTestProvider(origin_url, "o"), LocalTestProvider(dest_url, "d")
+    )
     res = manager.execute()
     assert "main" in res.synced_branches
 
@@ -191,7 +202,8 @@ def test_integration_fast_forward_and_conflict_resolution(git_test_env):
     with open(os.path.join(verify_dir, "code.py")) as f:
         assert f.read().strip() == "version = 2"
 
-    # 3. Create conflict: Destination modifies code.py to 'dest_conflict', Origin modifies to 'origin_conflict'
+    # 3. Create conflict: Destination modifies code.py to 'dest_conflict',
+    # Origin modifies to 'origin_conflict'
     with open(os.path.join(verify_dir, "code.py"), "w") as f:
         f.write("dest_conflict\n")
     verify_git.add(all_files=True)
@@ -205,7 +217,9 @@ def test_integration_fast_forward_and_conflict_resolution(git_test_env):
     base_git.push("origin", "main")
 
     # Run sync again -> 3-way merge should resolve using theirs (Origin's version)
-    manager2 = SyncManager(config, LocalTestProvider(origin_url, "o"), LocalTestProvider(dest_url, "d"))
+    manager2 = SyncManager(
+        config, LocalTestProvider(origin_url, "o"), LocalTestProvider(dest_url, "d")
+    )
     res2 = manager2.execute()
     assert not res2.errors
 
@@ -216,7 +230,7 @@ def test_integration_fast_forward_and_conflict_resolution(git_test_env):
         assert f.read().strip() == "origin_conflict"
 
 
-def test_integration_branch_pruning_and_mapping(git_test_env):
+def test_integration_branch_pruning_and_mapping(git_test_env: dict[str, str]) -> None:
     """
     Scenario 5 & 6:
     - Branch Name Mapping (Origin 'master' -> Destination 'main').
@@ -261,7 +275,9 @@ def test_integration_branch_pruning_and_mapping(git_test_env):
         DESTINATION_TOKEN="mock",
         BRANCH_MAPPING="master:main",
     )
-    manager = SyncManager(config, LocalTestProvider(origin_url, "o"), LocalTestProvider(dest_url, "d"))
+    manager = SyncManager(
+        config, LocalTestProvider(origin_url, "o"), LocalTestProvider(dest_url, "d")
+    )
     res = manager.execute()
 
     assert not res.errors

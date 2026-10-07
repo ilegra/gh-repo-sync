@@ -1,8 +1,7 @@
-import pytest
-from src.core.sync import is_exclusive_path, validate_branch_name, parse_author
+from src.core.sync import is_exclusive_path, parse_author, validate_branch_name
 
 
-def test_validate_branch_name():
+def test_validate_branch_name() -> None:
     # Valid branches
     assert validate_branch_name("main") is True
     assert validate_branch_name("feature/ABC-123") is True
@@ -24,7 +23,7 @@ def test_validate_branch_name():
     assert validate_branch_name("ends-with-slash/") is False
 
 
-def test_is_exclusive_path():
+def test_is_exclusive_path() -> None:
     exclusive = [".github", ".pipeline", "azure-pipelines*.yml", "charts"]
 
     # Exact matches and subpath matches
@@ -46,7 +45,7 @@ def test_is_exclusive_path():
     assert is_exclusive_path("src/index.js", exclusive) is False
 
 
-def test_parse_author():
+def test_parse_author() -> None:
     bot_name = "test-bot"
     bot_email = "bot@example.com"
 

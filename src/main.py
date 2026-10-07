@@ -1,15 +1,18 @@
 import os
 import sys
+
 import structlog
+from structlog.types import Processor
+
 from src.config import SyncConfig
 from src.core.sync import SyncManager
 from src.providers.azure_devops import AzureDevOpsProvider
 from src.providers.github import GitHubProvider
 
 
-def setup_logging():
+def setup_logging() -> None:
     is_github_actions = bool(os.getenv("GITHUB_ACTIONS"))
-    processors = [
+    processors: list[Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
@@ -26,7 +29,7 @@ def setup_logging():
     )
 
 
-def main():
+def main() -> None:
     setup_logging()
     logger = structlog.get_logger(__name__)
 
@@ -64,7 +67,11 @@ def main():
         logger.error("Sync completed with errors", errors=result.errors)
         sys.exit(1)
 
-    logger.info("Repository sync completed successfully", synced=result.synced_branches, removed=result.removed_branches)
+    logger.info(
+        "Repository sync completed successfully",
+        synced=result.synced_branches,
+        removed=result.removed_branches,
+    )
     sys.exit(0)
 
 

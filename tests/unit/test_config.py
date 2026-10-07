@@ -1,8 +1,11 @@
+from pathlib import Path
+
 import pytest
+
 from src.config import SyncConfig, SyncResult
 
 
-def test_config_parsing_and_defaults():
+def test_config_parsing_and_defaults() -> None:
     config = SyncConfig(
         ORIGIN_URL="https://dev.azure.com/org/proj/_git/repo",
         ORIGIN_TOKEN="secret-origin-pat",
@@ -28,7 +31,7 @@ def test_config_parsing_and_defaults():
     assert config.reverse_branch_mapping == {"main": "master", "dev": "develop"}
 
 
-def test_config_legacy_aliases(monkeypatch):
+def test_config_legacy_aliases(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ADO_URL", "https://dev.azure.com/org/proj/_git/repo")
     monkeypatch.setenv("ADO_PAT", "ado-token-xyz")
     monkeypatch.setenv("GH_URL", "https://github.com/org/repo")
@@ -45,7 +48,7 @@ def test_config_legacy_aliases(monkeypatch):
     assert "custom_gh" in config.destination_exclusive_paths
 
 
-def test_sync_result_serialization(tmp_path):
+def test_sync_result_serialization(tmp_path: Path) -> None:
     res_file = tmp_path / "sync.json"
     result = SyncResult(
         repo_name="my-repo",

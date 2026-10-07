@@ -1,7 +1,8 @@
 import os
 import re
 import subprocess
-from typing import List, Optional
+from typing import Optional
+
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -14,7 +15,7 @@ class GitError(Exception):
 
 
 class GitResult:
-    def __init__(self, exit_code: int, stdout: str, stderr: str, command: List[str]):
+    def __init__(self, exit_code: int, stdout: str, stderr: str, command: list[str]):
         self.exit_code = exit_code
         self.stdout = stdout
         self.stderr = stderr
@@ -25,7 +26,8 @@ class GitResult:
         if not self.success:
             cmd_str = " ".join(self.command)
             raise GitError(
-                f"Git command failed ({self.exit_code}): {cmd_str}\nStderr: {self.stderr}\nStdout: {self.stdout}",
+                f"Git command failed ({self.exit_code}): {cmd_str}\n"
+                f"Stderr: {self.stderr}\nStdout: {self.stdout}",
                 result=self,
             )
         return self
@@ -35,7 +37,7 @@ class GitResult:
 
 
 class Git:
-    def __init__(self, cwd: str, mask_patterns: Optional[List[str]] = None):
+    def __init__(self, cwd: str, mask_patterns: list[str] | None = None):
         self.cwd = cwd
         self.mask_patterns = mask_patterns or []
 
@@ -79,11 +81,17 @@ class Git:
 
     def clone(self, url: str, target_dir: str) -> GitResult:
         # Run clone using parent directory of target_dir or self.cwd if valid
-        clone_cwd = self.cwd if os.path.exists(self.cwd) else os.path.dirname(target_dir)
+        clone_cwd = (
+            self.cwd if os.path.exists(self.cwd) else os.path.dirname(target_dir)
+        )
         cmd = ["git", "clone", url, target_dir]
         try:
-            process = subprocess.run(cmd, cwd=clone_cwd, capture_output=True, text=True, check=False)
-            result = GitResult(process.returncode, process.stdout.strip(), process.stderr.strip(), cmd)
+            process = subprocess.run(
+                cmd, cwd=clone_cwd, capture_output=True, text=True, check=False
+            )
+            result = GitResult(
+                process.returncode, process.stdout.strip(), process.stderr.strip(), cmd
+            )
             result.raise_for_status()
             return result
         except FileNotFoundError as e:
@@ -126,17 +134,19 @@ class Git:
             return res.stdout
         return ""
 
-    def for_each_ref(self, ref_prefix: str, format_str: str = "%(refname)") -> List[str]:
+    def for_each_ref(
+        self, ref_prefix: str, format_str: str = "%(refname)"
+    ) -> list[str]:
         res = self.run("for-each-ref", f"--format={format_str}", ref_prefix, check=True)
         return [line.strip() for line in res.stdout.splitlines() if line.strip()]
 
     def checkout(
         self,
         branch: str,
-        base_ref: Optional[str] = None,
+        base_ref: str | None = None,
         create: bool = False,
         theirs: bool = False,
-        paths: Optional[List[str]] = None,
+        paths: list[str] | None = None,
     ) -> GitResult:
         args = ["checkout"]
         if theirs:
@@ -155,7 +165,7 @@ class Git:
             args.extend(paths)
         return self.run(*args)
 
-    def rm(self, paths: List[str], cached: bool = False, rf: bool = False) -> GitResult:
+    def rm(self, paths: list[str], cached: bool = False, rf: bool = False) -> GitResult:
         if not paths:
             return GitResult(0, "", "", ["git", "rm"])
         args = ["rm"]
@@ -167,7 +177,7 @@ class Git:
         args.extend(paths)
         return self.run(*args)
 
-    def add(self, paths: Optional[List[str]] = None, all_files: bool = False) -> GitResult:
+    def add(self, paths: list[str] | None = None, all_files: bool = False) -> GitResult:
         args = ["add"]
         if all_files:
             args.append("-A")
@@ -178,7 +188,9 @@ class Git:
             args.append(".")
         return self.run(*args)
 
-    def commit(self, message: str, author: Optional[str] = None, allow_empty: bool = False) -> GitResult:
+    def commit(
+        self, message: str, author: str | None = None, allow_empty: bool = False
+    ) -> GitResult:
         args = ["commit", "-m", message]
         if author:
             args.append(f"--author={author}")
@@ -186,7 +198,13 @@ class Git:
             args.append("--allow-empty")
         return self.run(*args)
 
-    def push(self, remote: str, ref: Optional[str] = None, delete: bool = False, tags: bool = False) -> GitResult:
+    def push(
+        self,
+        remote: str,
+        ref: str | None = None,
+        delete: bool = False,
+        tags: bool = False,
+    ) -> GitResult:
         args = ["push", remote]
         if delete and ref:
             args.extend(["--delete", ref])
@@ -198,11 +216,11 @@ class Git:
 
     def diff(
         self,
-        ref1: Optional[str] = None,
-        ref2: Optional[str] = None,
+        ref1: str | None = None,
+        ref2: str | None = None,
         name_only: bool = True,
-        diff_filter: Optional[str] = None,
-    ) -> List[str]:
+        diff_filter: str | None = None,
+    ) -> list[str]:
         args = ["diff"]
         if name_only:
             args.append("--name-only")
@@ -238,7 +256,7 @@ class Git:
         args.append(ref)
         return self.run(*args)
 
-    def status_porcelain(self) -> List[str]:
+    def status_porcelain(self) -> list[str]:
         res = self.run("status", "--porcelain", check=True)
         return [line.strip() for line in res.stdout.splitlines() if line.strip()]
 
@@ -249,7 +267,7 @@ class Git:
         args.append(ref)
         return self.run(*args)
 
-    def ls_files(self, path: Optional[str] = None, unmerged: bool = False) -> List[str]:
+    def ls_files(self, path: str | None = None, unmerged: bool = False) -> list[str]:
         args = ["ls-files"]
         if unmerged:
             args.append("-u")
