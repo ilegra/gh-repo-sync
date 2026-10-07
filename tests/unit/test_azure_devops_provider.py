@@ -1,20 +1,23 @@
 import responses
-import pytest
+
 from src.providers.azure_devops import AzureDevOpsProvider
 
 
-def test_ado_authenticated_url_and_repo_name():
+def test_ado_authenticated_url_and_repo_name() -> None:
     provider = AzureDevOpsProvider(
         repo_url="https://dev.azure.com/my-org/my-project/_git/my-repo",
         pat="my-pat-secret",
     )
     auth_url = provider.get_authenticated_url()
-    assert auth_url == "https://anything:my-pat-secret@dev.azure.com/my-org/my-project/_git/my-repo"
+    assert (
+        auth_url
+        == "https://anything:my-pat-secret@dev.azure.com/my-org/my-project/_git/my-repo"
+    )
     assert provider.get_repo_name() == "my-repo"
 
 
 @responses.activate
-def test_ado_is_repo_disabled_true():
+def test_ado_is_repo_disabled_true() -> None:
     provider = AzureDevOpsProvider(
         repo_url="https://dev.azure.com/my-org/my-project/_git/my-repo",
         pat="my-pat-secret",
@@ -31,7 +34,7 @@ def test_ado_is_repo_disabled_true():
 
 
 @responses.activate
-def test_ado_is_repo_disabled_false():
+def test_ado_is_repo_disabled_false() -> None:
     provider = AzureDevOpsProvider(
         repo_url="https://dev.azure.com/my-org/my-project/_git/my-repo",
         pat="my-pat-secret",
@@ -48,7 +51,7 @@ def test_ado_is_repo_disabled_false():
 
 
 @responses.activate
-def test_ado_api_retries_and_failure():
+def test_ado_api_retries_and_failure() -> None:
     provider = AzureDevOpsProvider(
         repo_url="https://dev.azure.com/my-org/my-project/_git/my-repo",
         pat="my-pat-secret",
