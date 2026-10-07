@@ -7,23 +7,16 @@ import structlog
 
 from src.config import SyncConfig, SyncResult
 from src.git.client import Git, GitError
-from src.providers.base import DestinationProvider, OriginProvider
+from src.providers.base import (
+    Branch,
+    DestinationProvider,
+    OriginProvider,
+)
+from src.providers.base import (
+    validate_branch_name as validate_branch_name,
+)
 
 logger = structlog.get_logger(__name__)
-
-
-def validate_branch_name(branch: str, git: Git | None = None) -> bool:
-    """Validates whether a branch name is safe and valid."""
-    if not branch or branch.startswith("-"):
-        return False
-    # Reject unsafe characters not conforming to safe branch regex
-    if re.search(r"[^a-zA-Z0-9._/-]", branch):
-        return False
-    if ".." in branch or branch.endswith("/") or branch.startswith("/"):
-        return False
-    if git:
-        return git.check_ref_format(branch)
-    return True
 
 
 def is_exclusive_path(target_path: str, exclusive_paths: list[str]) -> bool:
@@ -81,15 +74,17 @@ class SyncManager:
 
         self.git: Git = git_client
         self.default_branch: str = "main"
-        self.origin_branches: list[str] = []
-        self.destination_branches: list[str] = []
+        self.origin_branches: list[Branch] = []
+        self.destination_branches: list[Branch] = []
 
         self.synced_branches: list[str] = []
         self.removed_branches: list[str] = []
         self.sync_errors: list[str] = []
 
-        self.origin_remote = "origin_remote"
-        self.destination_remote = "destination_remote"
+        self.origin_remote = getattr(origin_provider, "remote_name", "origin_remote")
+        self.destination_remote = getattr(
+            destination_provider, "remote_name", "destination_remote"
+        )
 
     @property
     def git_client(self) -> Git:
@@ -233,8 +228,8 @@ class SyncManager:
     def _resolve_seed_reference(self, target_branch: str) -> str:
         if not self.git:
             return "HEAD"
-        dest_branch_ref = f"{self.destination_remote}/{target_branch}"
-        dest_default_ref = f"{self.destination_remote}/{self.default_branch}"
+        dest_branch_ref = self.destination_provider.get_remote_ref(target_branch)
+        dest_default_ref = self.destination_provider.get_remote_ref(self.default_branch)
         if self.git.ref_exists(dest_branch_ref):
             return dest_branch_ref
         if self.git.ref_exists(dest_default_ref):
@@ -253,7 +248,6 @@ class SyncManager:
         parent_git = Git(os.path.dirname(repo_dir), mask_patterns=mask_patterns)
 
         dest_url = self.destination_provider.get_authenticated_url()
-        origin_url = self.origin_provider.get_authenticated_url()
 
         # Clone destination repository
         logger.info("Cloning destination repository...")
@@ -262,72 +256,25 @@ class SyncManager:
         self.git.config("user.name", self.config.bot_name)
         self.git.config("user.email", self.config.bot_email)
 
-        # Set up remotes: rename default 'origin' clone to destination_remote,
-        # and add origin_remote
-        self.git.run("remote", "rename", "origin", self.destination_remote, check=True)
-        self.git.remote_add(self.origin_remote, origin_url)
+        # Providers handle remotes, fetching, and branch discovery
+        logger.info("Discovering branches via providers...")
+        self.origin_branches = self.origin_provider.get_branches()
+        if not self.origin_branches and self.origin_provider.is_repo_disabled():
+            logger.warning("Origin repository is disabled.")
+            return False
 
-        # Fetch both remotes
-        logger.info("Fetching references from remotes...")
-        fetch_origin = self.git.fetch(self.origin_remote, prune=True)
-        if not fetch_origin.success:
-            if (
-                "is disabled" in fetch_origin.stderr.lower()
-                or self.origin_provider.is_repo_disabled()
-            ):
-                logger.warning("Origin repository is disabled.")
-                return False
-            fetch_origin.raise_for_status()
-
-        self.git.fetch(self.destination_remote, prune=True)
-
-        # Identify default branch from destination
-        sym_res = self.git.symbolic_ref(
-            f"refs/remotes/{self.destination_remote}/HEAD", short=True
-        )
-        if sym_res.success and sym_res.stdout:
-            self.default_branch = sym_res.stdout.removeprefix(
-                f"{self.destination_remote}/"
-            )
-        else:
-            self.default_branch = "main"
+        self.destination_branches = self.destination_provider.get_branches()
+        self.default_branch = self.destination_provider.get_default_branch().name
 
         logger.info(
             "Detected destination default branch", default_branch=self.default_branch
         )
-
-        # Discover origin branches
-        prefix_origin = f"refs/remotes/{self.origin_remote}/"
-        raw_origin_refs = self.git.for_each_ref(prefix_origin)
-        self.origin_branches = []
-        for ref in raw_origin_refs:
-            b = ref.removeprefix(prefix_origin)
-            if b == "HEAD":
-                continue
-            if not validate_branch_name(b, self.git):
-                logger.warning("Ignoring invalid Origin branch name", branch=b)
-                continue
-            self.origin_branches.append(b)
-
-        # Discover destination branches
-        prefix_dest = f"refs/remotes/{self.destination_remote}/"
-        raw_dest_refs = self.git.for_each_ref(prefix_dest)
-        self.destination_branches = []
-        for ref in raw_dest_refs:
-            b = ref.removeprefix(prefix_dest)
-            if b == "HEAD":
-                continue
-            if not validate_branch_name(b, self.git):
-                logger.warning("Ignoring invalid Destination branch name", branch=b)
-                continue
-            self.destination_branches.append(b)
-
         logger.info(
             "Discovered branches",
             origin_count=len(self.origin_branches),
-            origin_branches=self.origin_branches,
+            origin_branches=[b.name for b in self.origin_branches],
             dest_count=len(self.destination_branches),
-            dest_branches=self.destination_branches,
+            dest_branches=[b.name for b in self.destination_branches],
         )
         return True
 
@@ -470,25 +417,27 @@ class SyncManager:
                 "3-way merge push failed", branch=dest_branch, stderr=push_res.stderr
             )
 
-    def _process_branch_sync(self, origin_branch: str) -> None:
+    def _process_branch_sync(self, origin_branch: Branch) -> None:
         assert self.git is not None
-        if not validate_branch_name(origin_branch, self.git):
+        if not validate_branch_name(origin_branch.name, self.git):
             return
 
-        # Apply branch name mapping: origin_branch -> dest_branch
-        dest_branch = self.config.branch_mapping.get(origin_branch, origin_branch)
+        # Apply branch name mapping: origin_branch.name -> dest_branch
+        dest_branch = self.config.branch_mapping.get(
+            origin_branch.name, origin_branch.name
+        )
         if not validate_branch_name(dest_branch, self.git):
             logger.warning(
                 "Mapped destination branch name is invalid", dest_branch=dest_branch
             )
             return
 
-        origin_ref = f"refs/remotes/{self.origin_remote}/{origin_branch}"
+        origin_ref = origin_branch.remote_ref
         if not self.git.ref_exists(origin_ref):
             logger.warning("Origin remote reference not found", origin_ref=origin_ref)
             return
 
-        dest_ref = f"{self.destination_remote}/{dest_branch}"
+        dest_ref = self.destination_provider.get_remote_ref(dest_branch)
 
         # Case 1: Branch does not exist on destination
         if not self.git.ref_exists(dest_ref):
@@ -499,7 +448,7 @@ class SyncManager:
         if self.git.merge_base_is_ancestor(origin_ref, dest_ref):
             logger.info(
                 "Branch already fully synced",
-                origin=origin_branch,
+                origin=origin_branch.name,
                 destination=dest_branch,
             )
             self.synced_branches.append(dest_branch)
@@ -528,33 +477,35 @@ class SyncManager:
         rev_mapping = self.config.reverse_branch_mapping
 
         for dest_branch in self.destination_branches:
-            if not validate_branch_name(dest_branch, self.git):
+            dest_branch_name = dest_branch.name
+            if not validate_branch_name(dest_branch_name, self.git):
                 continue
 
             # NEVER prune the destination default branch
-            if dest_branch == self.default_branch:
+            if dest_branch_name == self.default_branch:
                 continue
 
             # Determine corresponding origin branch name
-            origin_branch = rev_mapping.get(dest_branch, dest_branch)
-            origin_ref = f"refs/remotes/{self.origin_remote}/{origin_branch}"
+            origin_branch_name = rev_mapping.get(dest_branch_name, dest_branch_name)
+            origin_ref = self.origin_provider.get_remote_ref(origin_branch_name)
 
             if not self.git.ref_exists(origin_ref):
                 logger.info(
                     "Branch deleted on Origin, pruning on Destination",
-                    branch=dest_branch,
+                    branch=dest_branch_name,
                 )
                 del_res = self.git.push(
-                    self.destination_remote, ref=dest_branch, delete=True
+                    self.destination_remote, ref=dest_branch_name, delete=True
                 )
                 if del_res.success:
-                    self.removed_branches.append(dest_branch)
+                    self.removed_branches.append(dest_branch_name)
                 else:
                     self.sync_errors.append(
-                        f"Failed to delete branch `{dest_branch}` on destination"
+                        f"Failed to delete branch `{dest_branch_name}` on destination"
                     )
                     logger.warning(
-                        "Failed to delete branch on destination", branch=dest_branch
+                        "Failed to delete branch on destination",
+                        branch=dest_branch_name,
                     )
 
     def _sync_tags(self) -> None:

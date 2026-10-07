@@ -56,6 +56,8 @@ def main() -> None:
         origin_provider = AzureDevOpsProvider(
             repo_url=config.origin_url,
             pat=config.origin_token,
+            git=git_client,
+            remote_name="origin_remote",
         )
 
         # Destination provider factory (GitHub)
@@ -63,6 +65,7 @@ def main() -> None:
             repo_url=config.destination_url,
             token=config.destination_token,
             git=git_client,
+            remote_name="destination_remote",
         )
 
         manager = SyncManager(
@@ -91,6 +94,7 @@ def main() -> None:
         removed=result.removed_branches,
     )
     sys.exit(0)
+
 
 if __name__ == "__main__":
     main()
