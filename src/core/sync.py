@@ -236,6 +236,15 @@ class SyncManager:
             return dest_default_ref
         return "HEAD"
 
+    def _determine_default_branch(self) -> str:
+        for branch in self.destination_branches:
+            if branch.is_default:
+                return branch.name
+        for branch in self.origin_branches:
+            if branch.is_default:
+                return branch.name
+        return "main"
+
     def _setup_environment(self) -> bool:
         logger.info("Step 1: Setting up environment and remotes")
 
@@ -264,7 +273,7 @@ class SyncManager:
             return False
 
         self.destination_branches = self.destination_provider.get_branches()
-        self.default_branch = self.destination_provider.get_default_branch().name
+        self.default_branch = self._determine_default_branch()
 
         logger.info(
             "Detected destination default branch", default_branch=self.default_branch
@@ -482,7 +491,7 @@ class SyncManager:
                 continue
 
             # NEVER prune the destination default branch
-            if dest_branch_name == self.default_branch:
+            if dest_branch.is_default or dest_branch_name == self.default_branch:
                 continue
 
             # Determine corresponding origin branch name

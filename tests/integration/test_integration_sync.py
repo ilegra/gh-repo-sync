@@ -41,17 +41,15 @@ class LocalTestProvider(OriginProvider, DestinationProvider):
     def get_remote_ref(self, branch_name: str) -> str:
         return f"refs/remotes/{self.remote_name}/{branch_name}"
 
-    def get_default_branch(self) -> Branch:
+    def _get_default_branch_name(self) -> str:
         if not self.git:
-            return Branch(name="main", remote_ref=self.get_remote_ref("main"))
+            return "main"
         sym_res = self.git.symbolic_ref(
             f"refs/remotes/{self.remote_name}/HEAD", short=True
         )
         if sym_res.success and sym_res.stdout:
-            name = sym_res.stdout.removeprefix(f"{self.remote_name}/")
-        else:
-            name = "main"
-        return Branch(name=name, remote_ref=self.get_remote_ref(name))
+            return sym_res.stdout.removeprefix(f"{self.remote_name}/")
+        return "main"
 
     def get_branches(self) -> list[Branch]:
         if not self.git:
@@ -68,6 +66,7 @@ class LocalTestProvider(OriginProvider, DestinationProvider):
         if not fetch_res.success:
             fetch_res.raise_for_status()
 
+        default_name = self._get_default_branch_name()
         prefix = f"refs/remotes/{self.remote_name}/"
         raw_refs = self.git.for_each_ref(prefix)
         branches: list[Branch] = []
@@ -75,7 +74,24 @@ class LocalTestProvider(OriginProvider, DestinationProvider):
             b = ref.removeprefix(prefix)
             if b == "HEAD":
                 continue
-            branches.append(Branch(name=b, remote_ref=f"{prefix}{b}"))
+            branches.append(
+                Branch(
+                    name=b,
+                    remote_ref=f"{prefix}{b}",
+                    is_default=(b == default_name),
+                )
+            )
+
+        if branches and not any(br.is_default for br in branches):
+            fallback_index = 0
+            for idx, br in enumerate(branches):
+                if br.name in ("main", "master"):
+                    fallback_index = idx
+                    break
+            branches[fallback_index] = branches[fallback_index].model_copy(
+                update={"is_default": True}
+            )
+
         return branches
 
     def commit(

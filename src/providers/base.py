@@ -16,6 +16,12 @@ class Branch(BaseModel):
         ...,
         description="Remote-prefixed reference used in git operations",
     )
+    is_default: bool = Field(
+        default=False,
+        description=(
+            "Indicates whether this branch is the default branch of the repository"
+        ),
+    )
 
 
 def validate_branch_name(branch: str, git: "Git | None" = None) -> bool:
@@ -56,17 +62,8 @@ class OriginProvider(ABC):
         Fetches remote references from origin and returns all valid branches.
 
         Returns:
-            list[Branch]: List of valid branch objects available at origin.
-        """
-        pass
-
-    @abstractmethod
-    def get_default_branch(self) -> Branch:
-        """
-        Returns the default branch of the origin repository.
-
-        Returns:
-            Branch: Default branch instance.
+            list[Branch]: List of valid branch objects available at origin,
+                with the default branch indicated via `is_default=True`.
         """
         pass
 
@@ -123,17 +120,8 @@ class DestinationProvider(ABC):
         Fetches remote references from destination and returns all valid branches.
 
         Returns:
-            list[Branch]: List of valid branch objects available at destination.
-        """
-        pass
-
-    @abstractmethod
-    def get_default_branch(self) -> Branch:
-        """
-        Returns the default branch of the destination repository.
-
-        Returns:
-            Branch: Default branch instance.
+            list[Branch]: List of valid branch objects available at destination,
+                with the default branch indicated via `is_default=True`.
         """
         pass
 
