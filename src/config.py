@@ -1,8 +1,11 @@
 import os
-from typing import Any
+from typing import Any, Final
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEFAULT_FALLBACK_BOT_NAME: Final[str] = "github-actions[bot]"
+DEFAULT_FALLBACK_BOT_EMAIL: Final[str] = "github-actions[bot]@users.noreply.github.com"
 
 
 class SyncConfig(BaseSettings):
@@ -21,9 +24,9 @@ class SyncConfig(BaseSettings):
     )
     branch_mapping_raw: str = Field("", validation_alias="BRANCH_MAPPING")
 
-    bot_name: str = Field("gh-organization-cerc-com[bot]", validation_alias="BOT_NAME")
+    bot_name: str = Field(DEFAULT_FALLBACK_BOT_NAME, validation_alias="BOT_NAME")
     bot_email: str = Field(
-        "gh-organization-cerc-com[bot]@users.noreply.github.com",
+        DEFAULT_FALLBACK_BOT_EMAIL,
         validation_alias="BOT_EMAIL",
     )
     sync_json_file: str = Field("sync.json", validation_alias="SYNC_JSON_FILE")
@@ -34,6 +37,20 @@ class SyncConfig(BaseSettings):
         extra="ignore",
         populate_by_name=True,
     )
+
+    @field_validator("bot_name", mode="before")
+    @classmethod
+    def _validate_bot_name(cls, v: Any) -> str:
+        if v is None or not str(v).strip():
+            return DEFAULT_FALLBACK_BOT_NAME
+        return str(v).strip()
+
+    @field_validator("bot_email", mode="before")
+    @classmethod
+    def _validate_bot_email(cls, v: Any) -> str:
+        if v is None or not str(v).strip():
+            return DEFAULT_FALLBACK_BOT_EMAIL
+        return str(v).strip()
 
     @model_validator(mode="before")
     @classmethod
@@ -55,19 +72,47 @@ class SyncConfig(BaseSettings):
                 "GH_EXCLUSIVE_PATHS_RAW",
             ],
             "branch_mapping_raw": ["BRANCH_MAPPING", "BRANCH_MAPPINGS"],
-            "bot_name": ["BOT_NAME", "DEFAULT_BOT_NAME"],
-            "bot_email": ["BOT_EMAIL", "DEFAULT_BOT_EMAIL"],
+            "bot_name": [
+                "COMMITTER_NAME",
+                "BOT_NAME",
+                "GIT_COMMITTER_NAME",
+                "DEFAULT_BOT_NAME",
+            ],
+            "bot_email": [
+                "COMMITTER_EMAIL",
+                "BOT_EMAIL",
+                "GIT_COMMITTER_EMAIL",
+                "DEFAULT_BOT_EMAIL",
+            ],
             "sync_json_file": ["SYNC_JSON_FILE"],
         }
         res = dict(data) if isinstance(data, dict) else {}
         for field, alt_keys in aliases.items():
-            if field not in res or not res[field]:
+            current_val = res.get(field)
+            if current_val is None or (
+                isinstance(current_val, str) and not current_val.strip()
+            ):
                 for key in alt_keys:
-                    val = res.get(key) or os.getenv(key)
-                    if val is not None:
+                    val = res.get(key)
+                    if val is None:
+                        val = os.getenv(key)
+                    if val is not None and isinstance(val, str) and val.strip():
+                        res[field] = val.strip()
+                        break
+                    elif val is not None and not isinstance(val, str):
                         res[field] = val
                         break
         return res
+
+    @property
+    def committer_name(self) -> str:
+        """Git committer name fallback."""
+        return self.bot_name
+
+    @property
+    def committer_email(self) -> str:
+        """Git committer email fallback."""
+        return self.bot_email
 
     @property
     def origin_exclusive_paths(self) -> list[str]:
