@@ -1,4 +1,4 @@
-name: 'Repository Sync Action'
+name: 'Multi-Platform Git Sync'
 description: 'Synchronizes repositories from an Origin (Azure DevOps, etc.) to Destination (GitHub), maintaining commit authors and filtering exclusive paths'
 author: 'ilegra'
 branding:
@@ -30,14 +30,22 @@ inputs:
     description: 'Comma-separated branch mapping (origin:dest), e.g. "master:main"'
     required: false
     default: ''
-  bot-name:
+  committer-name:
     description: 'Git bot author/committer name fallback'
     required: false
-    default: 'gh-organization-cerc-com[bot]'
-  bot-email:
+    default: 'github-actions[bot]'
+  committer-email:
     description: 'Git bot author/committer email fallback'
     required: false
-    default: 'gh-organization-cerc-com[bot]@users.noreply.github.com'
+    default: 'github-actions[bot]@users.noreply.github.com'
+  bot-name:
+    description: 'Legacy alias for committer-name'
+    required: false
+    default: ''
+  bot-email:
+    description: 'Legacy alias for committer-email'
+    required: false
+    default: ''
 
 runs:
   using: 'docker'
@@ -50,5 +58,7 @@ runs:
     ORIGIN_EXCLUSIVE_PATHS: ${{ inputs.origin-exclusive-paths }}
     DESTINATION_EXCLUSIVE_PATHS: ${{ inputs.destination-exclusive-paths }}
     BRANCH_MAPPING: ${{ inputs.branch-mapping }}
+    COMMITTER_NAME: ${{ inputs.committer-name }}
+    COMMITTER_EMAIL: ${{ inputs.committer-email }}
     BOT_NAME: ${{ inputs.bot-name }}
     BOT_EMAIL: ${{ inputs.bot-email }}
