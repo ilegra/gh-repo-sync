@@ -2,7 +2,6 @@ import fnmatch
 import os
 import re
 import shutil
-import tempfile
 
 import structlog
 
@@ -69,15 +68,13 @@ class SyncManager:
         config: SyncConfig,
         origin_provider: OriginProvider,
         destination_provider: DestinationProvider,
-        working_dir: str | None = None,
+        git_client: Git,
     ):
         self.config = config
         self.origin_provider = origin_provider
         self.destination_provider = destination_provider
-        self.custom_working_dir = working_dir
-        self.temp_dir: str | None = None
 
-        self.git: Git | None = None
+        self.git: Git = git_client
         self.default_branch: str = "main"
         self.origin_branches: list[str] = []
         self.destination_branches: list[str] = []
@@ -91,22 +88,7 @@ class SyncManager:
 
     @property
     def git_client(self) -> Git:
-        if self.git is None:
-            raise RuntimeError("Git workspace not initialized")
         return self.git
-
-    def _setup_working_directory(self) -> str:
-        if self.custom_working_dir:
-            os.makedirs(self.custom_working_dir, exist_ok=True)
-            return self.custom_working_dir
-        self.temp_dir = tempfile.mkdtemp(prefix="repo_sync_")
-        repo_dir = os.path.join(self.temp_dir, "repo")
-        return repo_dir
-
-    def cleanup(self) -> None:
-        if self.temp_dir and os.path.exists(self.temp_dir):
-            shutil.rmtree(self.temp_dir, ignore_errors=True)
-            self.temp_dir = None
 
     def resolve_origin_author(self, ref: str) -> tuple[str, str]:
         if not self.git or not self.git.ref_exists(ref):
@@ -260,7 +242,7 @@ class SyncManager:
             logger.warning("Origin repository is marked as disabled or archived.")
             return False
 
-        repo_dir = self._setup_working_directory()
+        repo_dir = self.git.cwd
         mask_patterns = [self.config.origin_token, self.config.destination_token]
         parent_git = Git(os.path.dirname(repo_dir), mask_patterns=mask_patterns)
 
@@ -271,7 +253,6 @@ class SyncManager:
         logger.info("Cloning destination repository...")
         parent_git.clone(dest_url, repo_dir)
 
-        self.git = Git(repo_dir, mask_patterns=mask_patterns)
         self.git.config("user.name", self.config.bot_name)
         self.git.config("user.email", self.config.bot_email)
 
@@ -364,13 +345,17 @@ class SyncManager:
         if self.git.status_porcelain():
             msg = (
                 f"sync({dest_branch}): align exclusive paths with destination "
-                f"{self.default_branch} [skip actions]"
+                f"{self.default_branch}"
             )
-            self.git.commit(msg, author=f"{author_name} <{author_email}>")
+            self.destination_provider.commit(
+                subject=msg, author=f"{author_name} <{author_email}>"
+            )
         else:
-            msg = f"sync({dest_branch}): initialize branch from origin [skip actions]"
-            self.git.commit(
-                msg, author=f"{author_name} <{author_email}>", allow_empty=True
+            msg = f"sync({dest_branch}): initialize branch from origin"
+            self.destination_provider.commit(
+                subject=msg,
+                author=f"{author_name} <{author_email}>",
+                allow_empty=True,
             )
 
         push_res = self.git.push(self.destination_remote, ref=dest_branch)
@@ -401,12 +386,17 @@ class SyncManager:
         )
 
         self.git.add(all_files=True)
-        msg = f"sync({dest_branch}): {origin_subject} [skip actions]"
+        msg = f"sync({dest_branch}): {origin_subject}"
+
         if self.git.status_porcelain():
-            self.git.commit(msg, author=f"{author_name} <{author_email}>")
+            self.destination_provider.commit(
+                subject=msg, author=f"{author_name} <{author_email}>"
+            )
         else:
-            self.git.commit(
-                msg, author=f"{author_name} <{author_email}>", allow_empty=True
+            self.destination_provider.commit(
+                subject=msg,
+                author=f"{author_name} <{author_email}>",
+                allow_empty=True,
             )
 
         push_res = self.git.push(self.destination_remote, ref=dest_branch)
@@ -432,10 +422,8 @@ class SyncManager:
         )
         origin_short_sha = self.git.log_one(origin_ref, "%h") or "unknown"
 
-        sync_msg = (
-            f"sync({dest_branch}): {origin_subject} [skip actions]\n\n"
-            f"Origin commit {origin_short_sha} by {author_name} <{author_email}>"
-        )
+        subject_msg = f"sync({dest_branch}): {origin_subject}"
+        body_msg = f"Origin commit {origin_short_sha} by {author_name} <{author_email}>"
 
         self.git.merge(
             origin_ref,
@@ -453,10 +441,17 @@ class SyncManager:
         self.git.add(all_files=True)
 
         if self.git.status_porcelain():
-            self.git.commit(sync_msg, author=f"{author_name} <{author_email}>")
+            self.destination_provider.commit(
+                subject=subject_msg,
+                author=f"{author_name} <{author_email}>",
+                body=body_msg,
+            )
         else:
-            self.git.commit(
-                sync_msg, author=f"{author_name} <{author_email}>", allow_empty=True
+            self.destination_provider.commit(
+                subject=subject_msg,
+                author=f"{author_name} <{author_email}>",
+                body=body_msg,
+                allow_empty=True,
             )
 
         push_res = self.git.push(self.destination_remote, ref=dest_branch)
@@ -565,31 +560,28 @@ class SyncManager:
             logger.error("Failed to push tags", stderr=push_tags.stderr)
 
     def execute(self) -> SyncResult:
-        try:
-            active = self.setup_environment()
-            if not active:
-                res = SyncResult(
-                    repo_name=self.destination_provider.get_repo_name(),
-                    origin_repo=self.config.origin_url,
-                    destination_repo=self.config.destination_url,
-                    already_disabled=True,
-                )
-                res.write_to_file(self.config.sync_json_file)
-                return res
-
-            self.sync_branches()
-            self.prune_deleted_origin_branches()
-            self.sync_tags()
-
+        active = self.setup_environment()
+        if not active:
             res = SyncResult(
                 repo_name=self.destination_provider.get_repo_name(),
                 origin_repo=self.config.origin_url,
                 destination_repo=self.config.destination_url,
-                synced_branches=self.synced_branches,
-                removed_branches=self.removed_branches,
-                errors=self.sync_errors,
+                already_disabled=True,
             )
             res.write_to_file(self.config.sync_json_file)
             return res
-        finally:
-            self.cleanup()
+
+        self.sync_branches()
+        self.prune_deleted_origin_branches()
+        self.sync_tags()
+
+        res = SyncResult(
+            repo_name=self.destination_provider.get_repo_name(),
+            origin_repo=self.config.origin_url,
+            destination_repo=self.config.destination_url,
+            synced_branches=self.synced_branches,
+            removed_branches=self.removed_branches,
+            errors=self.sync_errors,
+        )
+        res.write_to_file(self.config.sync_json_file)
+        return res
