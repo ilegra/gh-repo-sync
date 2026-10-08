@@ -1,0 +1,21 @@
+# Gitleaks configuration for gh-repo-sync
+# Documentation: https://github.com/gitleaks/gitleaks
+
+title = "gh-repo-sync gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Global allowlist for benign test fixtures and documentation"
+paths = [
+    '''tests/.*''',
+    '''poetry\.lock''',
+]
+regexes = [
+    '''dummy-.*-token''',
+    '''mock-.*-token''',
+    '''secret-(origin|gh)-token''',
+    '''supersecretpat''',
+    '''mygithubtoken''',
+]
