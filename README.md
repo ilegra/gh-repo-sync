@@ -209,7 +209,38 @@ poetry run pytest tests/unit -v
 
 # Run integration tests
 poetry run pytest tests/integration -v
+
+# Install git pre-commit hooks (including Gitleaks)
+poetry run pre-commit install
 ```
+
+## Security and Secret Scanning
+
+This repository enforces automated secret detection using [Gitleaks](https://github.com/gitleaks/gitleaks) across both local development and CI/CD pipelines.
+
+### Local Development (Shift-Left)
+To prevent sensitive tokens and credentials from ever being committed:
+```bash
+# Install the pre-commit hook into your local .git/hooks
+poetry run pre-commit install
+
+# Manually trigger the pre-commit checks on all files
+poetry run pre-commit run --all-files
+```
+
+Alternatively, run a manual scan using the official Gitleaks container:
+```bash
+docker run --rm -v "$(pwd):/workspace" -w /workspace ghcr.io/gitleaks/gitleaks:latest detect --source=/workspace --verbose --redact
+```
+
+### Pull Request & CI Quality Gate
+The `.github/workflows/security.yml` workflow enforces mandatory secret scanning on every pull request targeting `main` and on merges to `main`. Pull requests that introduce hardcoded secrets are blocked until the secrets are revoked and removed.
+
+### False Positives and Allowlists
+If Gitleaks detects a benign pattern (such as simulated tokens in mock test fixtures):
+- **Repository-wide rules / path exclusions:** Configure patterns in [`.gitleaks.toml`](.gitleaks.toml) under `[allowlist]`.
+- **Inline exceptions:** Add an inline comment next to the false positive: `# gitleaks:allow`.
+- **Fingerprint-based baseline:** Add finding fingerprints to [`.gitleaksignore`](.gitleaksignore).
 
 ## Versioning and Release Process
 
