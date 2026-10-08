@@ -105,7 +105,7 @@ class SyncManager:
             full_path = os.path.join(repo_root, clean_path)
 
             if self.git.ref_exists(ref_check):
-                logger.info(
+                logger.debug(
                     "Restoring destination exclusive asset",
                     path=clean_path,
                     base_ref=base_ref,
@@ -119,7 +119,7 @@ class SyncManager:
                 self.git.add([clean_path])
             else:
                 if os.path.exists(full_path):
-                    logger.info(
+                    logger.debug(
                         "Removing destination asset not in base ref", path=clean_path
                     )
                     if os.path.isdir(full_path):
@@ -146,7 +146,7 @@ class SyncManager:
                             rel_path = os.path.relpath(
                                 os.path.join(root, filename), repo_root
                             )
-                            logger.info(
+                            logger.debug(
                                 "Purging origin exclusive asset (glob file)",
                                 path=rel_path,
                             )
@@ -158,7 +158,7 @@ class SyncManager:
                             rel_path = os.path.relpath(
                                 os.path.join(root, dirname), repo_root
                             )
-                            logger.info(
+                            logger.debug(
                                 "Purging origin exclusive asset (glob dir)",
                                 path=rel_path,
                             )
@@ -170,14 +170,14 @@ class SyncManager:
                 # Exact path or directory
                 tracked_files = self.git.ls_files(clean_item)
                 if tracked_files:
-                    logger.info(
+                    logger.debug(
                         "Purging origin exclusive tracked files", path=clean_item
                     )
                     self.git.rm(tracked_files, cached=True, rf=True)
 
                 full_path = os.path.join(repo_root, clean_item)
                 if os.path.exists(full_path):
-                    logger.info(
+                    logger.debug(
                         "Purging origin exclusive workspace file/dir", path=clean_item
                     )
                     self.git.rm([clean_item], cached=True, rf=True)
@@ -309,7 +309,7 @@ class SyncManager:
 
         seed_ref = self._resolve_seed_reference(dest_branch, default_branch)
         if self.git.ref_exists(seed_ref):
-            logger.info(
+            logger.debug(
                 "Applying exclusive asset seed", seed_ref=seed_ref, branch=dest_branch
             )
             self._protect_destination_exclusive_assets(seed_ref)
@@ -453,7 +453,7 @@ class SyncManager:
 
         # Case 2: Destination already has all commits from origin
         if self.git.merge_base_is_ancestor(origin_ref, dest_ref):
-            logger.info(
+            logger.debug(
                 "Branch already fully synced",
                 origin=origin_branch.name,
                 destination=dest_branch,
