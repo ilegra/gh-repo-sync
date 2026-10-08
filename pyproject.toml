@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "gh-repo-sync"
-version = "0.1.2"
+version = "0.1.3"
 description = "Repository synchronization engine from origin (Azure DevOps, etc.) to destination (GitHub)"
 authors = ["ilegra"]
 readme = "README.md"
