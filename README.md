@@ -34,6 +34,7 @@ jobs:
       contents: write # Required if destination uses GITHUB_TOKEN
     steps:
       - name: Sync from Azure DevOps
+        id: sync-step
         uses: ilegra/gh-repo-sync@v0
         with:
           origin-url: 'https://dev.azure.com/org/project/_git/repo'
@@ -60,6 +61,85 @@ jobs:
 | `committer-email` | No | `github-actions[bot]@users.noreply.github.com` | Committer email fallback when origin author cannot be resolved. |
 | `bot-name` | No | `""` | Legacy alias for `committer-name`. |
 | `bot-email` | No | `""` | Legacy alias for `committer-email`. |
+
+### Action Outputs
+
+The action emits execution reports directly to GitHub Actions output variables for downstream workflow steps to consume.
+
+#### `sync-result`
+A single-line JSON string containing the complete synchronization report.
+
+##### Schema Definition
+
+| Field | Type | Description |
+|---|---|---|
+| `repo_name` | `string` | Base repository name of the destination. |
+| `origin_repo` | `string` | Origin repository URL. |
+| `destination_repo` | `string` | Destination repository URL. |
+| `synced_branches` | `array[string]` | List of branch names that were synchronized or updated. |
+| `removed_branches` | `array[string]` | List of pruned branches that no longer exist in origin. |
+| `synced_tags` | `array[string]` | List of tag names synchronized to the destination. |
+| `already_disabled` | `boolean` | Flag indicating whether origin repo is disabled (sync bypassed). |
+| `errors` | `array[string]` | List of non-fatal and fatal errors collected during execution. |
+
+##### Example JSON Payload
+
+```json
+{
+  "repo_name": "destination-repo",
+  "origin_repo": "https://dev.azure.com/org/project/_git/origin-repo",
+  "destination_repo": "https://github.com/org/destination-repo.git",
+  "synced_branches": [
+    "main",
+    "feature/user-auth"
+  ],
+  "removed_branches": [
+    "feature/deprecated-flow"
+  ],
+  "synced_tags": [
+    "v1.2.0"
+  ],
+  "already_disabled": false,
+  "errors": []
+}
+```
+
+##### Consuming `sync-result` in Downstream Steps
+
+###### 1. Conditional Step Execution via `fromJSON()`
+Trigger downstream actions only when branches were synchronized:
+```yaml
+      - name: Trigger Build on Changes
+        if: ${{ fromJSON(steps.sync-step.outputs.sync-result).synced_branches[0] != null }}
+        run: echo "New branches or updates detected! Triggering downstream build..."
+```
+
+###### 2. Parsing Output Fields with `jq` in Bash
+Extract specific fields in shell steps for processing:
+```yaml
+      - name: Parse Synchronized Branches
+        run: |
+          SYNC_RESULT='${{ steps.sync-step.outputs.sync-result }}'
+          SYNCED_BRANCHES=$(echo "$SYNC_RESULT" | jq -r '.synced_branches | join(", ")')
+          REMOVED_BRANCHES=$(echo "$SYNC_RESULT" | jq -r '.removed_branches | join(", ")')
+          echo "Synced branches: $SYNCED_BRANCHES"
+          echo "Removed branches: $REMOVED_BRANCHES"
+```
+
+###### 3. Slack / PR Comment Notification Summary
+Generate a formatted markdown or notification summary from the returned report:
+```yaml
+      - name: Notify Slack or PR Summary
+        if: always()
+        run: |
+          SYNC_RESULT='${{ steps.sync-step.outputs.sync-result }}'
+          REPO=$(echo "$SYNC_RESULT" | jq -r '.repo_name')
+          ERRORS=$(echo "$SYNC_RESULT" | jq -r '.errors | length')
+          SYNCED_COUNT=$(echo "$SYNC_RESULT" | jq -r '.synced_branches | length')
+
+          SUMMARY="Sync completed for *${REPO}*: ${SYNCED_COUNT} branches updated, ${ERRORS} errors."
+          echo "SUMMARY=$SUMMARY" >> $GITHUB_ENV
+```
 
 ## CLI / Environment Variable Configuration
 

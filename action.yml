@@ -47,6 +47,10 @@ inputs:
     required: false
     default: ''
 
+outputs:
+  sync-result:
+    description: 'JSON-serialized synchronization report'
+
 runs:
   using: 'docker'
   image: 'Dockerfile'
