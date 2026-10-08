@@ -555,14 +555,12 @@ class SyncManager:
         """Executes repository synchronization and returns the final SyncResult."""
         env = self._setup_environment()
         if env is None:
-            res = SyncResult(
+            return SyncResult(
                 repo_name=self.destination_provider.get_repo_name(),
                 origin_repo=self.config.origin_url,
                 destination_repo=self.config.destination_url,
                 already_disabled=True,
             )
-            res.write_to_file(self.config.sync_json_file)
-            return res
 
         origin_branches, destination_branches, default_branch = env
 
@@ -579,7 +577,7 @@ class SyncManager:
 
         all_errors = branch_errors + prune_errors + tag_errors
 
-        res = SyncResult(
+        return SyncResult(
             repo_name=self.destination_provider.get_repo_name(),
             origin_repo=self.config.origin_url,
             destination_repo=self.config.destination_url,
@@ -588,5 +586,3 @@ class SyncManager:
             synced_tags=synced_tags,
             errors=all_errors,
         )
-        res.write_to_file(self.config.sync_json_file)
-        return res
