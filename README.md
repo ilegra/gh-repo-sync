@@ -106,39 +106,73 @@ A single-line JSON string containing the complete synchronization report.
 
 ##### Consuming `sync-result` in Downstream Steps
 
-###### 1. Conditional Step Execution via `fromJSON()`
-Trigger downstream actions only when branches were synchronized:
-```yaml
-      - name: Trigger Build on Changes
-        if: ${{ fromJSON(steps.sync-step.outputs.sync-result).synced_branches[0] != null }}
-        run: echo "New branches or updates detected! Triggering downstream build..."
-```
+The output is accessible in subsequent steps using `${{ steps.<step-id>.outputs.sync-result }}` (where `<step-id>` matches the `id` assigned to the sync step).
 
-###### 2. Parsing Output Fields with `jq` in Bash
-Extract specific fields in shell steps for processing:
-```yaml
-      - name: Parse Synchronized Branches
-        run: |
-          SYNC_RESULT='${{ steps.sync-step.outputs.sync-result }}'
-          SYNCED_BRANCHES=$(echo "$SYNC_RESULT" | jq -r '.synced_branches | join(", ")')
-          REMOVED_BRANCHES=$(echo "$SYNC_RESULT" | jq -r '.removed_branches | join(", ")')
-          echo "Synced branches: $SYNCED_BRANCHES"
-          echo "Removed branches: $REMOVED_BRANCHES"
-```
+> [!TIP]
+> **Safe Scripting Practice**: Always pass `${{ steps.<step-id>.outputs.sync-result }}` via an environment variable (`env:`) rather than inlining it directly into shell scripts. This prevents script injection and ensures special characters are preserved.
 
-###### 3. Slack / PR Comment Notification Summary
-Generate a formatted markdown or notification summary from the returned report:
+> [!NOTE]
+> **Error Handling**: When repository errors are encountered during synchronization, `gh-repo-sync` still emits the complete `sync-result` JSON with the errors populated before exiting with status code `1`. To inspect errors or run failure cleanup, configure downstream steps with `if: always()` or `if: failure()`.
+
+###### Looping Over Repositories and Processed Branches
+When synchronizing repositories within a workflow, aggregate the step outputs in an environment variable to loop through each repository and display its processed (synced and removed) branches:
+
 ```yaml
-      - name: Notify Slack or PR Summary
+      # 1. Sync repository A
+      - name: Sync Frontend Repo
+        id: sync-frontend
+        uses: ilegra/gh-repo-sync@v0
+        with:
+          origin-url: 'https://dev.azure.com/org/project/_git/frontend'
+          origin-token: ${{ secrets.ADO_PAT }}
+          destination-url: 'https://github.com/org/frontend.git'
+          destination-token: ${{ secrets.GH_TOKEN }}
+
+      # 2. Sync repository B
+      - name: Sync Backend Repo
+        id: sync-backend
+        uses: ilegra/gh-repo-sync@v0
+        with:
+          origin-url: 'https://dev.azure.com/org/project/_git/backend'
+          origin-token: ${{ secrets.ADO_PAT }}
+          destination-url: 'https://github.com/org/backend.git'
+          destination-token: ${{ secrets.GH_TOKEN }}
+
+      # 3. Extract and loop over each repository and its processed branches
+      - name: Print Repositories and Processed Branches
         if: always()
+        env:
+          REPOS_REPORTS: |
+            ${{ steps.sync-frontend.outputs.sync-result }}
+            ${{ steps.sync-backend.outputs.sync-result }}
         run: |
-          SYNC_RESULT='${{ steps.sync-step.outputs.sync-result }}'
-          REPO=$(echo "$SYNC_RESULT" | jq -r '.repo_name')
-          ERRORS=$(echo "$SYNC_RESULT" | jq -r '.errors | length')
-          SYNCED_COUNT=$(echo "$SYNC_RESULT" | jq -r '.synced_branches | length')
+          echo "$REPOS_REPORTS" | grep -v '^[[:space:]]*$' | while read -r repo_json; do
+            REPO=$(echo "$repo_json" | jq -r '.repo_name')
+            echo "=========================================="
+            echo "Repository: $REPO"
+            echo "=========================================="
 
-          SUMMARY="Sync completed for *${REPO}*: ${SYNCED_COUNT} branches updated, ${ERRORS} errors."
-          echo "SUMMARY=$SUMMARY" >> $GITHUB_ENV
+            echo "  Synced Branches:"
+            SYNCED=$(echo "$repo_json" | jq -r '.synced_branches[]?')
+            if [ -z "$SYNCED" ]; then
+              echo "    (none)"
+            else
+              echo "$SYNCED" | while read -r branch; do
+                echo "    - $branch"
+              done
+            fi
+
+            echo "  Removed Branches:"
+            REMOVED=$(echo "$repo_json" | jq -r '.removed_branches[]?')
+            if [ -z "$REMOVED" ]; then
+              echo "    (none)"
+            else
+              echo "$REMOVED" | while read -r branch; do
+                echo "    - (deleted) $branch"
+              done
+            fi
+            echo ""
+          done
 ```
 
 ## CLI / Environment Variable Configuration
