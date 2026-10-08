@@ -1,3 +1,4 @@
+import logging
 import os
 import shutil
 import sys
@@ -15,19 +16,19 @@ from src.providers.github import GitHubProvider
 
 
 def _setup_logging() -> None:
-    is_github_actions = bool(os.getenv("GITHUB_ACTIONS"))
+    log_level_str = os.getenv("LOG_LEVEL", "INFO").upper()
+    log_level = getattr(logging, log_level_str, logging.INFO)
+
     processors: list[Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
+        structlog.dev.ConsoleRenderer(colors=True),
     ]
-    if is_github_actions:
-        processors.append(structlog.processors.JSONRenderer())
-    else:
-        processors.append(structlog.dev.ConsoleRenderer())
 
     structlog.configure(
         processors=processors,
+        wrapper_class=structlog.make_filtering_bound_logger(log_level),
         logger_factory=structlog.PrintLoggerFactory(),
         cache_logger_on_first_use=True,
     )
