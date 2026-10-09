@@ -197,19 +197,6 @@ class SyncManager:
             if is_exclusive_path(file, all_exclusive):
                 return True
         return False
-
-    def _has_syncable_changes(self, dest_ref: str, origin_ref: str) -> bool:
-        if not self.git:
-            return False
-        changed_files = self.git.diff(dest_ref, origin_ref, name_only=True)
-        all_exclusive = (
-            self.config.destination_exclusive_paths + self.config.origin_exclusive_paths
-        )
-        for file in changed_files:
-            if not is_exclusive_path(file, all_exclusive):
-                return True
-        return False
-
     def _resolve_non_exclusive_conflicts(self) -> None:
         if not self.git:
             return
@@ -472,14 +459,6 @@ class SyncManager:
                 "Branch already fully synced",
                 origin=origin_branch.name,
                 destination=dest_branch,
-            )
-            return dest_branch, None, None
-
-        # Case 2.5: Origin has changes, but only in exclusive paths
-        if not self._has_syncable_changes(dest_ref, origin_ref):
-            logger.info(
-                "Skipping sync, changes are only in exclusive paths",
-                branch=dest_branch,
             )
             return dest_branch, None, None
 

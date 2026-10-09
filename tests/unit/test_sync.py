@@ -461,67 +461,6 @@ def test_sync_only_removed_branches() -> None:
     assert result.removed_branches == ["old"]
 
 
-def test_has_syncable_changes() -> None:
-    config = SyncConfig(
-        ORIGIN_URL="origin",
-        ORIGIN_TOKEN="token1",
-        DESTINATION_URL="dest",
-        DESTINATION_TOKEN="token2",
-        ORIGIN_EXCLUSIVE_PATHS="exclusive/*,origin-only.txt",
-        DESTINATION_EXCLUSIVE_PATHS="dest-only.txt",
-    )
-    mock_origin = MagicMock()
-    mock_dest = MagicMock()
-    mock_git = MagicMock()
-    manager = SyncManager(config, mock_origin, mock_dest, mock_git)
-
-    # No changes
-    mock_git.diff.return_value = []
-    assert manager._has_syncable_changes("dest/main", "origin/main") is False
-
-    # Only exclusive changes
-    mock_git.diff.return_value = [
-        "exclusive/file.txt",
-        "origin-only.txt",
-        "dest-only.txt",
-    ]
-    assert manager._has_syncable_changes("dest/main", "origin/main") is False
-
-    # Mixed changes (exclusive + non-exclusive)
-    mock_git.diff.return_value = ["exclusive/file.txt", "src/main.py"]
-    assert manager._has_syncable_changes("dest/main", "origin/main") is True
-
-    # Only non-exclusive changes
-    mock_git.diff.return_value = ["src/main.py"]
-    assert manager._has_syncable_changes("dest/main", "origin/main") is True
-
-
-def test_sync_only_exclusive_path_changes() -> None:
-    # 1 - origin has changes only in exclusive paths
-    manager, mock_git = _create_mock_sync_manager(
-        origin_branches=[
-            Branch(name="main", remote_ref="origin/main", is_default=True)
-        ],
-        dest_branches=[Branch(name="main", remote_ref="dest/main", is_default=True)],
-        merge_base_true_for=[],  # origin has new commits
-    )
-
-    with (
-        patch("src.core.sync.Git") as MockGit,
-        patch.object(SyncManager, "_has_syncable_changes", return_value=False),
-        patch.object(SyncManager, "_has_exclusive_path_changes", return_value=True),
-        patch.object(SyncManager, "_purge_origin_exclusive_assets"),
-        patch.object(SyncManager, "_resolve_seed_reference", return_value="dest/main"),
-    ):
-        MockGit.return_value = MagicMock()
-        result = manager.execute()
-
-    assert result.evaluated_branches == ["main"]
-    # Not updated because only exclusive paths changed
-    assert result.updated_branches == []
-    assert result.removed_branches == []
-
-
 def test_sync_mixed_path_changes() -> None:
     # 2 - origin has changes in both, exclusive and non-exclusive paths
     manager, mock_git = _create_mock_sync_manager(
@@ -534,7 +473,6 @@ def test_sync_mixed_path_changes() -> None:
 
     with (
         patch("src.core.sync.Git") as MockGit,
-        patch.object(SyncManager, "_has_syncable_changes", return_value=True),
         patch.object(SyncManager, "_has_exclusive_path_changes", return_value=True),
         patch.object(SyncManager, "_purge_origin_exclusive_assets"),
         patch.object(SyncManager, "_resolve_seed_reference", return_value="dest/main"),
@@ -551,3 +489,4 @@ def test_sync_mixed_path_changes() -> None:
     # Updated because syncable changes were present
     assert result.updated_branches == ["main"]
     assert result.removed_branches == []
+
