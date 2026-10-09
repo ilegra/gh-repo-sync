@@ -502,9 +502,7 @@ def test_sync_only_exclusive_path_changes() -> None:
         origin_branches=[
             Branch(name="main", remote_ref="origin/main", is_default=True)
         ],
-        dest_branches=[
-            Branch(name="main", remote_ref="dest/main", is_default=True)
-        ],
+        dest_branches=[Branch(name="main", remote_ref="dest/main", is_default=True)],
         merge_base_true_for=[],  # origin has new commits
     )
 
@@ -530,9 +528,7 @@ def test_sync_mixed_path_changes() -> None:
         origin_branches=[
             Branch(name="main", remote_ref="origin/main", is_default=True)
         ],
-        dest_branches=[
-            Branch(name="main", remote_ref="dest/main", is_default=True)
-        ],
+        dest_branches=[Branch(name="main", remote_ref="dest/main", is_default=True)],
         merge_base_true_for=[],  # origin has new commits
     )
 
