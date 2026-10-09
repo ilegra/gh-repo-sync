@@ -93,17 +93,25 @@ jobs:
         run: poetry run pytest tests/integration -v
 
   release:
-    name: Tag & Create GitHub Release
+    name: Bump Version, Tag & Create GitHub Release
     needs: [lint, unit-tests, integration-tests]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[skip ci]')
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
+      - name: Generate App Token
+        id: generate-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.SYNC_BOT_APP_ID }}
+          private-key: ${{ secrets.SYNC_BOT_PRIVATE_KEY }}
+
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          token: ${{ steps.generate-token.outputs.token }}
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -120,51 +128,43 @@ jobs:
       - name: Install dependencies
         run: poetry install --with dev
 
-      - name: Extract Canonical Version
-        id: version
+      - name: Configure Git Identity for GitHub App
         run: |
-          APP_VERSION=$(poetry version --short)
-          TAG_NAME="v${APP_VERSION}"
-          echo "version=${APP_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG_NAME}" >> "$GITHUB_OUTPUT"
-          echo "Resolved application canonical version: ${APP_VERSION} (tag: ${TAG_NAME})"
+          git config user.name "gh-sync-bot[bot]"
+          git config user.email "${{ secrets.SYNC_BOT_APP_ID }}+gh-sync-bot[bot]@users.noreply.github.com"
 
-      - name: Check if Tag Already Exists
-        id: check_tag
+      - name: Bump Version in pyproject.toml and Commit
+        id: bump
         run: |
-          TAG_NAME="${{ steps.version.outputs.tag }}"
-          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Tag ${TAG_NAME} already exists on repository. Skipping release creation."
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "Tag ${TAG_NAME} is new. Proceeding with release."
-          fi
+          poetry version patch
+          NEW_VERSION=$(poetry version --short)
+          TAG_NAME="v${NEW_VERSION}"
+          echo "version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+
+          git add pyproject.toml
+          git commit -m "chore(release): bump version to ${NEW_VERSION} [skip ci]"
+          git push origin HEAD:main
 
       - name: Generate Release Notes
-        if: steps.check_tag.outputs.exists == 'false'
         run: |
           poetry run python -m src.release_notes --output RELEASE_NOTES.md
           echo "Generated release notes:"
           cat RELEASE_NOTES.md
 
       - name: Create Git Tag and GitHub Release
-        if: steps.check_tag.outputs.exists == 'false'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
         run: |
-          TAG_NAME="${{ steps.version.outputs.tag }}"
+          TAG_NAME="${{ steps.bump.outputs.tag }}"
           gh release create "$TAG_NAME" \
             --title "Release ${TAG_NAME}" \
             --notes-file RELEASE_NOTES.md \
-            --target "$GITHUB_SHA"
+            --target main
 
       - name: Update Floating Major Version Tag
-        if: steps.check_tag.outputs.exists == 'false'
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          MAJOR_TAG="v$(echo "${{ steps.version.outputs.version }}" | cut -d. -f1)"
-          git tag -fa "$MAJOR_TAG" -m "Update floating major tag $MAJOR_TAG to ${{ steps.version.outputs.tag }}"
+          MAJOR_TAG="v$(echo "${{ steps.bump.outputs.version }}" | cut -d. -f1)"
+          git tag -fa "$MAJOR_TAG" -m "Update floating major tag $MAJOR_TAG to ${{ steps.bump.outputs.tag }}"
           git push origin "$MAJOR_TAG" --force
 
