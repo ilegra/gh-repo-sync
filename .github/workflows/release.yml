@@ -104,7 +104,7 @@ jobs:
         id: generate-token
         uses: actions/create-github-app-token@v1
         with:
-          app-id: ${{ secrets.SYNC_BOT_APP_ID }}
+          app-id: ${{ secrets.SYNC_BOT_APP_ID || '169404563' }}
           private-key: ${{ secrets.SYNC_BOT_PRIVATE_KEY }}
 
       - name: Checkout repository
@@ -131,7 +131,7 @@ jobs:
       - name: Configure Git Identity for GitHub App
         run: |
           git config user.name "gh-sync-bot[bot]"
-          git config user.email "${{ secrets.SYNC_BOT_APP_ID }}+gh-sync-bot[bot]@users.noreply.github.com"
+          git config user.email "169404563+gh-sync-bot[bot]@users.noreply.github.com"
 
       - name: Bump Version in pyproject.toml and Commit
         id: bump
