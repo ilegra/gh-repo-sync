@@ -425,10 +425,10 @@ class SyncManager:
 
     def _process_branch_sync(
         self, origin_branch: Branch, default_branch: str
-    ) -> tuple[str | None, str | None]:
+    ) -> tuple[str | None, str | None, str | None]:
         assert self.git is not None
         if not validate_branch_name(origin_branch.name, self.git):
-            return None, None
+            return None, None, None
 
         # Apply branch name mapping: origin_branch.name -> dest_branch
         dest_branch = self.config.branch_mapping.get(
@@ -438,18 +438,19 @@ class SyncManager:
             logger.warning(
                 "Mapped destination branch name is invalid", dest_branch=dest_branch
             )
-            return None, None
+            return None, None, None
 
         origin_ref = origin_branch.remote_ref
         if not self.git.ref_exists(origin_ref):
             logger.warning("Origin remote reference not found", origin_ref=origin_ref)
-            return None, None
+            return None, None, None
 
         dest_ref = self.destination_provider.get_remote_ref(dest_branch)
 
         # Case 1: Branch does not exist on destination
         if not self.git.ref_exists(dest_ref):
-            return self._sync_new_branch(dest_branch, origin_ref, default_branch)
+            updated, err = self._sync_new_branch(dest_branch, origin_ref, default_branch)
+            return dest_branch, updated, err
 
         # Case 2: Destination already has all commits from origin
         if self.git.merge_base_is_ancestor(origin_ref, dest_ref):
@@ -458,35 +459,40 @@ class SyncManager:
                 origin=origin_branch.name,
                 destination=dest_branch,
             )
-            return None, None
+            return dest_branch, None, None
 
         # Case 3: Safe fast-forward (no changes in exclusive paths and
         # destination is ancestor of origin)
         if not self._has_exclusive_path_changes(
             dest_ref, origin_ref
         ) and self.git.merge_base_is_ancestor(dest_ref, origin_ref):
-            return self._perform_fast_forward_sync(dest_branch, origin_ref, dest_ref)
+            updated, err = self._perform_fast_forward_sync(dest_branch, origin_ref, dest_ref)
+            return dest_branch, updated, err
         else:
             # Case 4: 3-way merge
-            return self._perform_three_way_merge_sync(
+            updated, err = self._perform_three_way_merge_sync(
                 dest_branch, origin_ref, dest_ref, default_branch
             )
+            return dest_branch, updated, err
 
     def _sync_branches(
         self, origin_branches: list[Branch], default_branch: str
-    ) -> tuple[list[str], list[str]]:
+    ) -> tuple[list[str], list[str], list[str]]:
         logger.info("Step 2: Syncing branches from Origin to Destination")
-        synced_branches: list[str] = []
+        evaluated_branches: list[str] = []
+        updated_branches: list[str] = []
         sync_errors: list[str] = []
 
         for branch in origin_branches:
-            synced_branch, error = self._process_branch_sync(branch, default_branch)
-            if synced_branch:
-                synced_branches.append(synced_branch)
+            evaluated, updated, error = self._process_branch_sync(branch, default_branch)
+            if evaluated:
+                evaluated_branches.append(evaluated)
+            if updated:
+                updated_branches.append(updated)
             if error:
                 sync_errors.append(error)
 
-        return synced_branches, sync_errors
+        return evaluated_branches, updated_branches, sync_errors
 
     def _prune_deleted_origin_branches(
         self, destination_branches: list[Branch], default_branch: str
@@ -564,7 +570,7 @@ class SyncManager:
 
         origin_branches, destination_branches, default_branch = env
 
-        synced_branches, branch_errors = self._sync_branches(
+        evaluated_branches, updated_branches, branch_errors = self._sync_branches(
             origin_branches=origin_branches, default_branch=default_branch
         )
 
@@ -581,7 +587,8 @@ class SyncManager:
             repo_name=self.destination_provider.get_repo_name(),
             origin_repo=self.config.origin_url,
             destination_repo=self.config.destination_url,
-            synced_branches=synced_branches,
+            evaluated_branches=evaluated_branches,
+            updated_branches=updated_branches,
             removed_branches=removed_branches,
             synced_tags=synced_tags,
             errors=all_errors,

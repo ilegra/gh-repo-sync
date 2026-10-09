@@ -162,8 +162,10 @@ def test_sync_manager_execute() -> None:
         result = manager.execute()
 
     assert result.repo_name == "test-repo"
-    assert "main" not in result.synced_branches  # fully synced
-    assert "feature/new" in result.synced_branches  # newly pushed
+    assert "main" in result.evaluated_branches
+    assert "feature/new" in result.evaluated_branches
+    assert "main" not in result.updated_branches  # fully synced
+    assert "feature/new" in result.updated_branches  # newly pushed
     assert "feature/old" in result.removed_branches  # pruned
     assert "v1.0" in result.synced_tags  # mock parsed from stderr
 
@@ -296,3 +298,144 @@ def test_sync_manager_author_resolution_fallback() -> None:
     name, email = manager._resolve_origin_author("origin/main")
     assert name == "Fallback Committer"
     assert email == "fallback@example.com"
+
+
+def _create_mock_sync_manager(
+    origin_branches: list[Branch],
+    dest_branches: list[Branch],
+    merge_base_true_for: list[tuple[str, str]] = None,
+) -> tuple[SyncManager, MagicMock]:
+    config = SyncConfig(
+        ORIGIN_URL="origin",
+        ORIGIN_TOKEN="token1",
+        DESTINATION_URL="dest",
+        DESTINATION_TOKEN="token2",
+    )
+    mock_origin = MagicMock()
+    mock_origin.is_repo_disabled.return_value = False
+    mock_origin.get_branches.return_value = origin_branches
+    mock_origin.remote_name = "origin"
+    mock_origin.get_remote_ref = lambda b: f"origin/{b}"
+
+    mock_dest = MagicMock()
+    mock_dest.get_repo_name.return_value = "test-repo"
+    mock_dest.get_authenticated_url.return_value = "auth-dest"
+    mock_dest.get_branches.return_value = dest_branches
+    mock_dest.remote_name = "dest"
+    mock_dest.get_remote_ref = lambda b: f"dest/{b}"
+
+    mock_git = MagicMock()
+    mock_git.ref_exists.return_value = True
+
+    if merge_base_true_for is None:
+        merge_base_true_for = []
+
+    def merge_base_side_effect(ref1: str, ref2: str) -> bool:
+        return (ref1, ref2) in merge_base_true_for
+
+    mock_git.merge_base_is_ancestor.side_effect = merge_base_side_effect
+    mock_git.push.return_value = GitResult(0, "", "", [])
+    mock_git.status_porcelain.return_value = []
+    mock_git.cwd = "/tmp/fake-repo"
+
+    manager = SyncManager(config, mock_origin, mock_dest, mock_git)
+    return manager, mock_git
+
+
+def test_sync_no_branches_to_sync() -> None:
+    # 1 - when there are no branches to sync whatsoever
+    manager, _ = _create_mock_sync_manager(
+        origin_branches=[],
+        dest_branches=[],
+    )
+    with (
+        patch("src.core.sync.Git") as MockGit,
+        patch.object(SyncManager, "_has_exclusive_path_changes", return_value=False),
+        patch.object(SyncManager, "_purge_origin_exclusive_assets"),
+        patch.object(SyncManager, "_resolve_seed_reference", return_value="dest/main"),
+    ):
+        MockGit.return_value = MagicMock()
+        result = manager.execute()
+
+    assert result.evaluated_branches == []
+    assert result.updated_branches == []
+    assert result.removed_branches == []
+
+
+def test_sync_branches_without_updates() -> None:
+    # 2 - When there branches without updates
+    manager, _ = _create_mock_sync_manager(
+        origin_branches=[Branch(name="main", remote_ref="origin/main", is_default=True)],
+        dest_branches=[Branch(name="main", remote_ref="dest/main", is_default=True)],
+        merge_base_true_for=[("origin/main", "dest/main")],
+    )
+    with (
+        patch("src.core.sync.Git") as MockGit,
+        patch.object(SyncManager, "_has_exclusive_path_changes", return_value=False),
+        patch.object(SyncManager, "_purge_origin_exclusive_assets"),
+        patch.object(SyncManager, "_resolve_seed_reference", return_value="dest/main"),
+    ):
+        MockGit.return_value = MagicMock()
+        result = manager.execute()
+
+    assert result.evaluated_branches == ["main"]
+    assert result.updated_branches == []
+    assert result.removed_branches == []
+
+
+def test_sync_branches_with_updates() -> None:
+    # 3 - When there are branches with updates
+    manager, _ = _create_mock_sync_manager(
+        origin_branches=[
+            Branch(name="main", remote_ref="origin/main", is_default=True),
+            Branch(name="feat", remote_ref="origin/feat", is_default=False),
+        ],
+        dest_branches=[
+            Branch(name="main", remote_ref="dest/main", is_default=True),
+        ],
+        merge_base_true_for=[("origin/main", "dest/main")], # main is fully synced, feat is not
+    )
+    # the manager will see 'feat' is not in destination since we'll mock ref_exists
+    manager.git_client.ref_exists.side_effect = lambda ref: ref in ["origin/main", "origin/feat", "dest/main"]
+    
+    with (
+        patch("src.core.sync.Git") as MockGit,
+        patch.object(SyncManager, "_has_exclusive_path_changes", return_value=False),
+        patch.object(SyncManager, "_purge_origin_exclusive_assets"),
+        patch.object(SyncManager, "_resolve_seed_reference", return_value="dest/main"),
+    ):
+        MockGit.return_value = MagicMock()
+        result = manager.execute()
+
+    assert "main" in result.evaluated_branches
+    assert "feat" in result.evaluated_branches
+    assert "main" not in result.updated_branches
+    assert "feat" in result.updated_branches
+    assert result.removed_branches == []
+
+
+def test_sync_only_removed_branches() -> None:
+    # 4 - no branches with updates, only removed branches
+    manager, _ = _create_mock_sync_manager(
+        origin_branches=[Branch(name="main", remote_ref="origin/main", is_default=True)],
+        dest_branches=[
+            Branch(name="main", remote_ref="dest/main", is_default=True),
+            Branch(name="old", remote_ref="dest/old", is_default=False),
+        ],
+        merge_base_true_for=[("origin/main", "dest/main")],
+    )
+    # mock ref_exists to say 'origin/old' doesn't exist
+    manager.git_client.ref_exists.side_effect = lambda ref: ref in ["origin/main", "dest/main", "dest/old"]
+
+    with (
+        patch("src.core.sync.Git") as MockGit,
+        patch.object(SyncManager, "_has_exclusive_path_changes", return_value=False),
+        patch.object(SyncManager, "_purge_origin_exclusive_assets"),
+        patch.object(SyncManager, "_resolve_seed_reference", return_value="dest/main"),
+    ):
+        MockGit.return_value = MagicMock()
+        result = manager.execute()
+
+    assert result.evaluated_branches == ["main"]
+    assert result.updated_branches == []
+    assert result.removed_branches == ["old"]

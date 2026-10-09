@@ -102,7 +102,8 @@ def main() -> int:
 
     logger.info(
         "Repository sync completed successfully",
-        synced=result.synced_branches,
+        evaluated=result.evaluated_branches,
+        updated=result.updated_branches,
         removed=result.removed_branches,
     )
     return 0

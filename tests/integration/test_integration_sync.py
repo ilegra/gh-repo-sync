@@ -218,8 +218,8 @@ def test_integration_new_branch_and_exclusive_paths(
     result = manager.execute()
 
     assert not result.errors
-    assert "main" in result.synced_branches
-    assert "feature/login" in result.synced_branches
+    assert "main" in result.updated_branches
+    assert "feature/login" in result.updated_branches
 
     # 5. Verify Destination State
     verify_dir = os.path.join(root, "verify_work")
@@ -290,7 +290,7 @@ def test_integration_fast_forward_and_conflict_resolution(
         sync_git1,
     )
     res = manager.execute()
-    assert "main" in res.synced_branches
+    assert "main" in res.updated_branches
 
     # Verify linear update in destination
     verify_dir = os.path.join(root, "verify_ff")
@@ -395,7 +395,7 @@ def test_integration_branch_pruning_and_mapping(git_test_env: dict[str, str]) ->
     res = manager.execute()
 
     assert not res.errors
-    assert "main" in res.synced_branches
+    assert "main" in res.updated_branches
     assert "old-deprecated" in res.removed_branches
 
     # Verify destination branches
