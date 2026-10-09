@@ -54,7 +54,8 @@ def test_sync_result_serialization(tmp_path: Path) -> None:
         repo_name="my-repo",
         origin_repo="https://dev.azure.com/org/proj/_git/my-repo",
         destination_repo="https://github.com/org/my-repo",
-        synced_branches=["main", "feature/1"],
+        evaluated_branches=["main", "feature/1"],
+        updated_branches=["feature/1"],
         removed_branches=["old-branch"],
         errors=[],
     )
@@ -62,7 +63,8 @@ def test_sync_result_serialization(tmp_path: Path) -> None:
     assert res_file.exists()
     content = res_file.read_text()
     assert '"repo_name": "my-repo"' in content
-    assert '"synced_branches": [\n    "main",\n    "feature/1"\n  ]' in content
+    assert '"evaluated_branches": [\n    "main",\n    "feature/1"\n  ]' in content
+    assert '"updated_branches": [\n    "feature/1"\n  ]' in content
 
 
 def test_config_committer_defaults_and_properties() -> None:

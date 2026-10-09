@@ -187,7 +187,8 @@ class SyncResult(BaseModel):
     repo_name: str
     origin_repo: str
     destination_repo: str
-    synced_branches: list[str] = Field(default_factory=list)
+    evaluated_branches: list[str] = Field(default_factory=list)
+    updated_branches: list[str] = Field(default_factory=list)
     removed_branches: list[str] = Field(default_factory=list)
     synced_tags: list[str] = Field(default_factory=list)
     already_disabled: bool = False

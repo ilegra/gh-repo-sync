@@ -76,7 +76,8 @@ A single-line JSON string containing the complete synchronization report.
 | `repo_name` | `string` | Base repository name of the destination. |
 | `origin_repo` | `string` | Origin repository URL. |
 | `destination_repo` | `string` | Destination repository URL. |
-| `synced_branches` | `array[string]` | List of branch names that were synchronized or updated. |
+| `evaluated_branches` | `array[string]` | List of branch names that were successfully read and evaluated from origin. |
+| `updated_branches` | `array[string]` | List of branch names that actually received new commits and were updated on destination. |
 | `removed_branches` | `array[string]` | List of pruned branches that no longer exist in origin. |
 | `synced_tags` | `array[string]` | List of tag names synchronized to the destination. |
 | `already_disabled` | `boolean` | Flag indicating whether origin repo is disabled (sync bypassed). |
@@ -89,7 +90,12 @@ A single-line JSON string containing the complete synchronization report.
   "repo_name": "destination-repo",
   "origin_repo": "https://dev.azure.com/org/project/_git/origin-repo",
   "destination_repo": "https://github.com/org/destination-repo.git",
-  "synced_branches": [
+  "evaluated_branches": [
+    "main",
+    "feature/user-auth",
+    "feature/deprecated-flow"
+  ],
+  "updated_branches": [
     "main",
     "feature/user-auth"
   ],
@@ -152,12 +158,22 @@ When synchronizing repositories within a workflow, aggregate the step outputs in
             echo "Repository: $REPO"
             echo "=========================================="
 
-            echo "  Synced Branches:"
-            SYNCED=$(echo "$repo_json" | jq -r '.synced_branches[]?')
-            if [ -z "$SYNCED" ]; then
+            echo "  Evaluated Branches:"
+            EVALUATED=$(echo "$repo_json" | jq -r '.evaluated_branches[]?')
+            if [ -z "$EVALUATED" ]; then
               echo "    (none)"
             else
-              echo "$SYNCED" | while read -r branch; do
+              echo "$EVALUATED" | while read -r branch; do
+                echo "    - $branch"
+              done
+            fi
+
+            echo "  Updated Branches:"
+            UPDATED=$(echo "$repo_json" | jq -r '.updated_branches[]?')
+            if [ -z "$UPDATED" ]; then
+              echo "    (none)"
+            else
+              echo "$UPDATED" | while read -r branch; do
                 echo "    - $branch"
               done
             fi
