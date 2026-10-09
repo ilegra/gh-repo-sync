@@ -303,7 +303,7 @@ def test_sync_manager_author_resolution_fallback() -> None:
 def _create_mock_sync_manager(
     origin_branches: list[Branch],
     dest_branches: list[Branch],
-    merge_base_true_for: list[tuple[str, str]] = None,
+    merge_base_true_for: list[tuple[str, str]] | None = None,
 ) -> tuple[SyncManager, MagicMock]:
     config = SyncConfig(
         ORIGIN_URL="origin",
@@ -365,7 +365,9 @@ def test_sync_no_branches_to_sync() -> None:
 def test_sync_branches_without_updates() -> None:
     # 2 - When there branches without updates
     manager, _ = _create_mock_sync_manager(
-        origin_branches=[Branch(name="main", remote_ref="origin/main", is_default=True)],
+        origin_branches=[
+            Branch(name="main", remote_ref="origin/main", is_default=True)
+        ],
         dest_branches=[Branch(name="main", remote_ref="dest/main", is_default=True)],
         merge_base_true_for=[("origin/main", "dest/main")],
     )
@@ -385,7 +387,7 @@ def test_sync_branches_without_updates() -> None:
 
 def test_sync_branches_with_updates() -> None:
     # 3 - When there are branches with updates
-    manager, _ = _create_mock_sync_manager(
+    manager, mock_git = _create_mock_sync_manager(
         origin_branches=[
             Branch(name="main", remote_ref="origin/main", is_default=True),
             Branch(name="feat", remote_ref="origin/feat", is_default=False),
@@ -393,11 +395,20 @@ def test_sync_branches_with_updates() -> None:
         dest_branches=[
             Branch(name="main", remote_ref="dest/main", is_default=True),
         ],
-        merge_base_true_for=[("origin/main", "dest/main")], # main is fully synced, feat is not
+        merge_base_true_for=[
+            ("origin/main", "dest/main")
+        ],  # main is fully synced, feat is not
     )
     # the manager will see 'feat' is not in destination since we'll mock ref_exists
-    manager.git_client.ref_exists.side_effect = lambda ref: ref in ["origin/main", "origin/feat", "dest/main"]
-    
+    mock_git.ref_exists.side_effect = lambda ref: (
+        ref
+        in [
+            "origin/main",
+            "origin/feat",
+            "dest/main",
+        ]
+    )
+
     with (
         patch("src.core.sync.Git") as MockGit,
         patch.object(SyncManager, "_has_exclusive_path_changes", return_value=False),
@@ -416,8 +427,10 @@ def test_sync_branches_with_updates() -> None:
 
 def test_sync_only_removed_branches() -> None:
     # 4 - no branches with updates, only removed branches
-    manager, _ = _create_mock_sync_manager(
-        origin_branches=[Branch(name="main", remote_ref="origin/main", is_default=True)],
+    manager, mock_git = _create_mock_sync_manager(
+        origin_branches=[
+            Branch(name="main", remote_ref="origin/main", is_default=True)
+        ],
         dest_branches=[
             Branch(name="main", remote_ref="dest/main", is_default=True),
             Branch(name="old", remote_ref="dest/old", is_default=False),
@@ -425,7 +438,14 @@ def test_sync_only_removed_branches() -> None:
         merge_base_true_for=[("origin/main", "dest/main")],
     )
     # mock ref_exists to say 'origin/old' doesn't exist
-    manager.git_client.ref_exists.side_effect = lambda ref: ref in ["origin/main", "dest/main", "dest/old"]
+    mock_git.ref_exists.side_effect = lambda ref: (
+        ref
+        in [
+            "origin/main",
+            "dest/main",
+            "dest/old",
+        ]
+    )
 
     with (
         patch("src.core.sync.Git") as MockGit,

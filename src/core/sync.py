@@ -449,7 +449,9 @@ class SyncManager:
 
         # Case 1: Branch does not exist on destination
         if not self.git.ref_exists(dest_ref):
-            updated, err = self._sync_new_branch(dest_branch, origin_ref, default_branch)
+            updated, err = self._sync_new_branch(
+                dest_branch, origin_ref, default_branch
+            )
             return dest_branch, updated, err
 
         # Case 2: Destination already has all commits from origin
@@ -466,7 +468,9 @@ class SyncManager:
         if not self._has_exclusive_path_changes(
             dest_ref, origin_ref
         ) and self.git.merge_base_is_ancestor(dest_ref, origin_ref):
-            updated, err = self._perform_fast_forward_sync(dest_branch, origin_ref, dest_ref)
+            updated, err = self._perform_fast_forward_sync(
+                dest_branch, origin_ref, dest_ref
+            )
             return dest_branch, updated, err
         else:
             # Case 4: 3-way merge
@@ -484,7 +488,9 @@ class SyncManager:
         sync_errors: list[str] = []
 
         for branch in origin_branches:
-            evaluated, updated, error = self._process_branch_sync(branch, default_branch)
+            evaluated, updated, error = self._process_branch_sync(
+                branch, default_branch
+            )
             if evaluated:
                 evaluated_branches.append(evaluated)
             if updated:
