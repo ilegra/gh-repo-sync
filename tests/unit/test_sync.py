@@ -489,4 +489,3 @@ def test_sync_mixed_path_changes() -> None:
     # Updated because syncable changes were present
     assert result.updated_branches == ["main"]
     assert result.removed_branches == []
-

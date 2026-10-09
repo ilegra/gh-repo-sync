@@ -197,6 +197,7 @@ class SyncManager:
             if is_exclusive_path(file, all_exclusive):
                 return True
         return False
+
     def _resolve_non_exclusive_conflicts(self) -> None:
         if not self.git:
             return
