@@ -5,6 +5,17 @@ on:
     branches: [ "main" ]
   push:
     branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Version bump level'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -95,7 +106,9 @@ jobs:
   release:
     name: Bump Version, Tag & Create GitHub Release
     needs: [lint, unit-tests, integration-tests]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[skip ci]')
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[skip ci]')) ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -136,7 +149,13 @@ jobs:
       - name: Bump Version in pyproject.toml and Commit
         id: bump
         run: |
-          poetry version patch
+          BUMP_TYPE="${{ inputs.bump_type }}"
+          if [ -z "$BUMP_TYPE" ]; then
+            BUMP_TYPE="patch"
+          fi
+          echo "Bumping version using type: $BUMP_TYPE"
+
+          poetry version "$BUMP_TYPE"
           NEW_VERSION=$(poetry version --short)
           TAG_NAME="v${NEW_VERSION}"
           echo "version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
