@@ -1,5 +1,7 @@
 # GitHub Repository Sync (gh-repo-sync)
 
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 A modular application to synchronize Git repositories from an Origin (Azure DevOps, etc.) to a Destination (GitHub). The engine maintains commit authors, handles exclusive path filtering, and supports branch mapping, ensuring seamless cross-platform syncing without unintended side effects.
 
 ## Features
@@ -286,4 +288,8 @@ When code is integrated via GitHub Actions:
    - If the tag `v<version>` does not yet exist, it analyzes the commit history since the previous tag using Conventional Commits.
    - It generates structured release notes categorized into Features, Bug Fixes, Improvements, and Pull Requests.
    - It creates the Git tag and publishes a new GitHub Release.
+
+## License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
