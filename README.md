@@ -12,6 +12,56 @@ A modular application to synchronize Git repositories from an Origin (Azure DevO
 - **Destination Action Suppression:** When pushing commits to GitHub, the engine automatically injects the `[skip actions]` marker. This is handled transparently by the `GitHubProvider` to ensure that GitHub Actions workflows are not recursively or redundantly triggered by automated syncs.
 - **Smart Merge Resolution:** Automatically resolves non-exclusive file conflicts by favoring the origin repository state (theirs).
 
+## Why `gh-repo-sync`? (Comparison)
+
+Choosing the right synchronization or migration strategy depends on your workflow requirements. Here is how `gh-repo-sync` compares to standard approaches:
+
+| Feature / Capability | `gh-repo-sync` | Standard Git Mirror (`git push --mirror`) | GitHub Importer (`gh repo import`) |
+| :--- | :---: | :---: | :---: |
+| **Continuous / Incremental Sync** | ✅ Native (pulls incremental changes on schedule) | ⚠️ Brittle (can overwrite local destination changes) | ❌ No (one-time migration only) |
+| **Selective Path Exclusion** | ✅ Yes (`origin-exclusive-paths`, `destination-exclusive-paths`) | ❌ No (mirrors entire tree byte-for-byte) | ❌ No (imports full repo history) |
+| **Protected Destination Files** | ✅ Yes (protects `.github/`, workflows, destination docs) | ❌ No (overwrites `.github/` from origin) | ❌ No (destination must be empty or gets replaced) |
+| **Branch Mapping / Translation** | ✅ Yes (e.g., `master:main`, custom branches) | ❌ No (strictly 1:1 ref mirroring) | ❌ No (imports existing branches as-is) |
+| **CI Loop Prevention** | ✅ Built-in `[skip actions]` injection | ❌ No (can trigger heavy action pipelines on push) | ❌ N/A |
+| **Author & History Preservation** | ✅ Preserved accurately | ✅ Preserved accurately | ✅ Preserved accurately |
+| **Execution Environment** | Docker container, GitHub Action, or CLI | Shell script / custom runner | CLI / Hosted web service |
+
+## Use Cases & Practical Examples
+
+### 1. Continuous Synchronization (Keeping ADO and GitHub in Sync)
+
+Keep repositories synchronized between different platforms (e.g., an internal enterprise Azure DevOps organization and an open-source or partner-facing GitHub organization) on a scheduled basis.
+
+```mermaid
+flowchart TD
+    ADO[("Azure DevOps\n(Origin Repo)")]
+    GHA[["GitHub Actions Runner\n(Scheduled Cron / Dispatch)"]]
+    SyncEngine{"gh-repo-sync Engine"}
+    GH[("GitHub\n(Destination Repo)")]
+
+    GHA -.->|Triggers periodically| SyncEngine
+    SyncEngine -->|1. Fetch evaluated branches & commits| ADO
+    SyncEngine -->|2. Filter exclusive paths & map branches| SyncEngine
+    SyncEngine -->|3. Append [skip actions] & Push| GH
+```
+
+- **Avoid Pipeline Triggers**: The sync pushes commits with `[skip actions]` so downstream GitHub Actions workflows don't trigger recursively on every sync cycle.
+- **Isolate CI Configuration**: Destination-exclusive paths like `.github/` remain untouched on GitHub, while origin CI pipelines (`azure-pipelines.yml`, `.pipeline/`) are excluded from syncing.
+
+### 2. Ad-hoc Migration (Origin to GitHub)
+
+Use `gh-repo-sync` to perform a clean, one-time ad-hoc migration from any supported origin provider into GitHub:
+- **Clean up legacy pipelines**: Purge origin CI/CD files during migration by configuring `origin-exclusive-paths`.
+- **Adopt modern default branch standards**: Migrate and rename `master` from origin to `main` seamlessly on GitHub using `branch-mapping: 'master:main'`.
+- **Pre-seed GitHub Actions**: You can initialize `.github/workflows` on the GitHub destination repo first, set `destination-exclusive-paths: '.github'`, and run the sync without worrying about origin overwriting your GitHub Actions setups.
+
+## Extensible Architecture
+
+`gh-repo-sync` is architected with a modular provider abstraction designed to support multiple origin and destination Git platforms:
+- **Current Support**: Origin support is fully implemented and tested for **Azure DevOps (ADO)**, with destination support for **GitHub**.
+- **Extensible Providers**: The underlying engine defines clean repository and provider interfaces, allowing straightforward extension for additional origins (such as GitLab, Bitbucket, AWS CodeCommit, or self-hosted Git servers) in future releases.
+
+
 ## Action Avoidance (`[skip actions]`)
 
 Because synchronizing large histories across platforms can inadvertently trigger massive, redundant CI/CD runs on the destination repository, `gh-repo-sync` explicitly prevents this on GitHub destinations. 
