@@ -39,10 +39,10 @@ flowchart TD
     SyncEngine{"gh-repo-sync Engine"}
     GH[("GitHub\n(Destination Repo)")]
 
-    GHA -.->|Triggers periodically| SyncEngine
-    SyncEngine -->|1. Fetch evaluated branches & commits| ADO
-    SyncEngine -->|2. Filter exclusive paths & map branches| SyncEngine
-    SyncEngine -->|3. Append [skip actions] & Push| GH
+    GHA -.->|"Triggers periodically"| SyncEngine
+    SyncEngine -->|"1. Fetch evaluated branches & commits"| ADO
+    SyncEngine -->|"2. Filter exclusive paths & map branches"| SyncEngine
+    SyncEngine -->|"3. Append [skip actions] & Push"| GH
 ```
 
 - **Avoid Pipeline Triggers**: The sync pushes commits with `[skip actions]` so downstream GitHub Actions workflows don't trigger recursively on every sync cycle.
