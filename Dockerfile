@@ -1,7 +1,7 @@
 # -------------------------------------------------------------
 # Stage 1: Build & Dependency Installation
 # -------------------------------------------------------------
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 WORKDIR /build
 
@@ -22,7 +22,7 @@ RUN poetry install --only main --no-interaction --no-ansi
 # -------------------------------------------------------------
 # Stage 2: Minimal Runtime Image
 # -------------------------------------------------------------
-FROM python:3.12-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 # Install only git and ca-certificates needed for git operations
 RUN apt-get update && \
