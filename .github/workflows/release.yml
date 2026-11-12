@@ -38,6 +38,7 @@ jobs:
           filters: |
             code:
               - 'src/**'
+              - 'gh_repo_sync/**'
               - 'tests/**'
               - 'pyproject.toml'
               - 'poetry.lock'
@@ -71,13 +72,13 @@ jobs:
         run: poetry install --with dev
 
       - name: Run Ruff (Lint)
-        run: poetry run ruff check src tests
+        run: poetry run ruff check src gh_repo_sync tests
 
       - name: Run Ruff (Format Check)
-        run: poetry run ruff format --check src tests
+        run: poetry run ruff format --check src gh_repo_sync tests
 
       - name: Run Mypy (Type Check)
-        run: poetry run mypy src tests
+        run: poetry run mypy src gh_repo_sync tests
 
   unit-tests:
     name: Unit Tests
@@ -133,15 +134,47 @@ jobs:
       - name: Run Integration Tests
         run: poetry run pytest tests/integration -v
 
+  package:
+    name: Package Build & Pip Verification
+    needs: [filter]
+    if: needs.filter.outputs.code == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install Poetry
+        run: curl -sSL https://install.python-poetry.org | python3 -
+
+      - name: Configure Poetry Path
+        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Build Distribution Packages
+        run: poetry build
+
+      - name: Verify Wheel Installation via Pip
+        run: |
+          pip install dist/*.whl
+          gh-repo-sync --version
+          gh-repo-sync --help
+          python -c "import gh_repo_sync; print(gh_repo_sync.__version__)"
+
   release:
     name: Bump Version, Tag & Create GitHub Release
-    needs: [filter, lint, unit-tests, integration-tests]
+    needs: [filter, lint, unit-tests, integration-tests, package]
     if: >-
       always() &&
       needs.filter.outputs.code == 'true' &&
       (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
       (needs.unit-tests.result == 'success' || needs.unit-tests.result == 'skipped') &&
       (needs.integration-tests.result == 'success' || needs.integration-tests.result == 'skipped') &&
+      (needs.package.result == 'success' || needs.package.result == 'skipped') &&
       ((github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[skip ci]')) ||
        (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-24.04
@@ -206,15 +239,35 @@ jobs:
           echo "Generated release notes:"
           cat RELEASE_NOTES.md
 
-      - name: Create Git Tag and GitHub Release
+      - name: Build Distribution Packages (Wheel and Source Tarball)
+        run: |
+          poetry build
+          ls -la dist/
+
+      - name: Create Git Tag and GitHub Release with Package Assets
         env:
           GH_TOKEN: ${{ steps.generate-token.outputs.token }}
         run: |
           TAG_NAME="${{ steps.bump.outputs.tag }}"
           gh release create "$TAG_NAME" \
+            dist/* \
             --title "Release ${TAG_NAME}" \
             --notes-file RELEASE_NOTES.md \
             --target main
+
+      - name: Upload Build Artifacts to GitHub Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: gh-repo-sync-dist-${{ steps.bump.outputs.tag }}
+          path: dist/
+          retention-days: 90
+
+      - name: Publish Package to PyPI (optional)
+        if: env.POETRY_PYPI_TOKEN_PYPI != ''
+        env:
+          POETRY_PYPI_TOKEN_PYPI: ${{ secrets.PYPI_TOKEN || secrets.POETRY_PYPI_TOKEN_PYPI }}
+        run: |
+          poetry publish
 
       - name: Update Floating Major Version Tag
         run: |

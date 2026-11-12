@@ -13,6 +13,7 @@ from src.core.sync import SyncManager
 from src.git.client import Git
 from src.providers.azure_devops import AzureDevOpsProvider
 from src.providers.github import GitHubProvider
+from src.version import get_version
 
 
 def _setup_logging() -> None:
@@ -34,13 +35,41 @@ def _setup_logging() -> None:
     )
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     """
     CLI entrypoint for repository synchronization execution.
+
+    Args:
+        argv: Optional command-line arguments. Defaults to sys.argv[1:].
 
     Returns:
         int: 0 on success, 1 on failure.
     """
+    if argv is None:
+        argv = sys.argv[1:]
+
+    if "--version" in argv or "-V" in argv:
+        print(f"gh-repo-sync {get_version()}")
+        return 0
+
+    if "--help" in argv or "-h" in argv:
+        print("Usage: gh-repo-sync")
+        print("\nRepository synchronization engine (Origin to GitHub).\n")
+        print("Options:")
+        print("  -h, --help     Show this help message and exit")
+        print("  -V, --version  Show application version and exit\n")
+        print("Environment Variables:")
+        print("  ORIGIN_URL                   Origin repository URL (required)")
+        print("  ORIGIN_TOKEN                 Origin PAT / access token (required)")
+        print("  DESTINATION_URL              Destination GitHub repo URL (required)")
+        print("  DESTINATION_TOKEN            Destination GitHub token (required)")
+        print("  ORIGIN_EXCLUSIVE_PATHS       Paths on Origin to purge from sync")
+        print("  DESTINATION_EXCLUSIVE_PATHS  Paths on Destination to keep protected")
+        print("  BRANCH_MAPPING               Branch mapping origin:dest")
+        print("  COMMITTER_NAME               Committer name fallback")
+        print("  COMMITTER_EMAIL              Committer email fallback")
+        return 0
+
     _setup_logging()
     logger = structlog.get_logger(__name__)
 

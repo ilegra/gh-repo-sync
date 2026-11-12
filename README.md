@@ -243,6 +243,59 @@ When synchronizing repositories within a workflow, aggregate the step outputs in
           done
 ```
 
+## Local Installation via pip
+
+You can install `gh-repo-sync` directly into your local Python environment using `pip` (requires Python 3.10+):
+
+### 1. From GitHub Release Assets
+Install the pre-built wheel or source tarball directly from the GitHub Release assets:
+
+```bash
+# Install the wheel directly from the release
+pip install https://github.com/ilegra/gh-repo-sync/releases/download/v1.0.7/gh_repo_sync-1.0.7-py3-none-any.whl
+
+# Or install from the source tarball
+pip install https://github.com/ilegra/gh-repo-sync/releases/download/v1.0.7/gh_repo_sync-1.0.7.tar.gz
+```
+
+### 2. Directly from Git Repository
+Install directly from the Git repository using a specific tag or branch:
+
+```bash
+# Install a specific release tag
+pip install git+https://github.com/ilegra/gh-repo-sync.git@v1.0.7
+
+# Install the latest from main
+pip install git+https://github.com/ilegra/gh-repo-sync.git
+```
+
+### 3. Usage After Installation
+Once installed, the CLI executable `gh-repo-sync` (and `gh-sync` alias) is available in your PATH:
+
+```bash
+# Verify version
+gh-repo-sync --version
+
+# Display help and supported environment variables
+gh-repo-sync --help
+
+# Run repository synchronization
+export ORIGIN_URL="https://dev.azure.com/org/project/_git/repo"
+export ORIGIN_TOKEN="<pat>"
+export DESTINATION_URL="https://github.com/org/repo.git"
+export DESTINATION_TOKEN="<gh_token>"
+gh-repo-sync
+```
+
+You can also import and use `gh-repo-sync` programmatically in Python:
+
+```python
+import gh_repo_sync
+from gh_repo_sync import SyncConfig, SyncManager, SyncResult
+
+print(f"Running gh-repo-sync v{gh_repo_sync.__version__}")
+```
+
 ## CLI / Environment Variable Configuration
 
 For standalone or local container execution, the following environment variables are supported:
@@ -268,9 +321,9 @@ This project uses Poetry for dependency management and requires Python 3.10+.
 poetry install
 
 # Run linters and type checking
-poetry run ruff check src tests
-poetry run ruff format --check src tests
-poetry run mypy src tests
+poetry run ruff check src gh_repo_sync tests
+poetry run ruff format --check src gh_repo_sync tests
+poetry run mypy src gh_repo_sync tests
 
 # Run unit tests
 poetry run pytest tests/unit -v
@@ -333,11 +386,14 @@ The canonical version of the application is defined in [`pyproject.toml`](pyproj
 When code is integrated via GitHub Actions:
 1. **Pull Requests:** `lint`, `unit-tests`, and `integration-tests` run concurrently in parallel to validate proposed changes.
 2. **Main Branch:** Upon merging into `main`, the identical checks run in parallel again to verify the integrated state.
-3. **Automated Release & Tagging:** If all verification jobs pass:
+3. **Automated Release, Packaging & Tagging:** If all verification jobs pass:
    - The pipeline resolves the canonical application version from `pyproject.toml`.
    - If the tag `v<version>` does not yet exist, it analyzes the commit history since the previous tag using Conventional Commits.
    - It generates structured release notes categorized into Features, Bug Fixes, Improvements, and Pull Requests.
-   - It creates the Git tag and publishes a new GitHub Release.
+   - It builds distribution packages (standard wheel `.whl` and source tarball `.tar.gz`) via Poetry.
+   - It creates the Git tag and publishes a new GitHub Release with the package distributions attached as release assets.
+   - It uploads distribution artifacts to GitHub Actions workflow runs.
+   - Optionally publishes to PyPI if `PYPI_TOKEN` is configured.
 
 ## License
 

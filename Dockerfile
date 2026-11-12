@@ -15,6 +15,7 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 COPY pyproject.toml poetry.lock* README.md /build/
 COPY src /build/src
+COPY gh_repo_sync /build/gh_repo_sync
 
 # Install only production dependencies into the isolated virtualenv
 RUN poetry install --only main --no-interaction --no-ansi
@@ -34,6 +35,7 @@ WORKDIR /app
 # Copy isolated virtual environment and application code from builder
 COPY --from=builder /opt/venv /opt/venv
 COPY src /app/src
+COPY gh_repo_sync /app/gh_repo_sync
 
 # Configure environment to use the isolated virtualenv
 ENV PATH="/opt/venv/bin:$PATH"
