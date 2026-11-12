@@ -28,6 +28,7 @@ jobs:
           filters: |
             code:
               - 'src/**'
+              - 'gh_repo_sync/**'
               - 'tests/**'
               - 'pyproject.toml'
               - 'poetry.lock'

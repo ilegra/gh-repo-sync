@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir poetry
 
 COPY pyproject.toml poetry.lock* README.md /app/
 COPY src /app/src
+COPY gh_repo_sync /app/gh_repo_sync
 
 RUN poetry config virtualenvs.create false && \
     poetry install --no-interaction --no-ansi

@@ -146,3 +146,28 @@ def test_main_returns_0_when_already_disabled(mock_valid_config: SyncConfig) -> 
         ret = main()
         assert ret == 0
         mock_adapter.publish.assert_called_once_with(dummy_result)
+
+
+def test_main_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    ret = main(["--version"])
+    assert ret == 0
+    captured = capsys.readouterr()
+    assert "gh-repo-sync" in captured.out
+
+
+def test_main_help_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    ret = main(["--help"])
+    assert ret == 0
+    captured = capsys.readouterr()
+    assert "Usage: gh-repo-sync" in captured.out
+    assert "ORIGIN_URL" in captured.out
+
+
+def test_gh_repo_sync_package_exports() -> None:
+    import gh_repo_sync
+
+    assert hasattr(gh_repo_sync, "__version__")
+    assert hasattr(gh_repo_sync, "SyncManager")
+    assert hasattr(gh_repo_sync, "SyncConfig")
+    assert hasattr(gh_repo_sync, "SyncResult")
+    assert hasattr(gh_repo_sync, "main")
