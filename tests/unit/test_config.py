@@ -123,3 +123,20 @@ def test_config_committer_env_aliases(monkeypatch: pytest.MonkeyPatch) -> None:
     assert config.bot_email == "committer@git.env"
     assert config.committer_name == "Git Env Committer"
     assert config.committer_email == "committer@git.env"
+
+
+def test_config_bitbucket_aliases_and_default_exclusions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ORIGIN_URL", "https://bitbucket.org/workspace/repo")
+    monkeypatch.setenv("BITBUCKET_TOKEN", "bb-secret")
+    monkeypatch.setenv("BITBUCKET_USERNAME", "bb-user")
+    monkeypatch.setenv("ORIGIN_TYPE", "bitbucket")
+    monkeypatch.setenv("DESTINATION_URL", "https://github.com/org/repo.git")
+    monkeypatch.setenv("DESTINATION_TOKEN", "gh-secret")
+
+    config = SyncConfig()
+    assert config.origin_token == "bb-secret"
+    assert config.origin_username == "bb-user"
+    assert config.origin_provider == "bitbucket"
+    assert "bitbucket-pipelines.yml" in config.origin_exclusive_paths

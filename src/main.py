@@ -11,7 +11,7 @@ from src.adapters.github_action import GithubActionOutputAdapter
 from src.config import SyncConfig
 from src.core.sync import SyncManager
 from src.git.client import Git
-from src.providers.azure_devops import AzureDevOpsProvider
+from src.providers.factory import get_origin_provider
 from src.providers.github import GitHubProvider
 from src.version import get_version
 
@@ -61,6 +61,8 @@ def main(argv: list[str] | None = None) -> int:
         print("Environment Variables:")
         print("  ORIGIN_URL                   Origin repository URL (required)")
         print("  ORIGIN_TOKEN                 Origin PAT / access token (required)")
+        print("  ORIGIN_USERNAME              Origin username (optional)")
+        print("  ORIGIN_PROVIDER              Origin provider (ado, bitbucket)")
         print("  DESTINATION_URL              Destination GitHub repo URL (required)")
         print("  DESTINATION_TOKEN            Destination GitHub token (required)")
         print("  ORIGIN_EXCLUSIVE_PATHS       Paths on Origin to purge from sync")
@@ -88,11 +90,10 @@ def main(argv: list[str] | None = None) -> int:
         mask_patterns = [config.origin_token, config.destination_token]
         git_client = Git(repo_dir, mask_patterns=mask_patterns)
 
-        # Origin provider factory (Azure DevOps is the currently supported origin)
-        origin_provider = AzureDevOpsProvider(
-            repo_url=config.origin_url,
-            pat=config.origin_token,
-            git=git_client,
+        # Origin provider factory
+        origin_provider = get_origin_provider(
+            config=config,
+            git_client=git_client,
             remote_name="origin_remote",
         )
 

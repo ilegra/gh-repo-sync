@@ -42,7 +42,7 @@ def test_main_returns_1_on_sync_manager_exception(
     with (
         patch("src.main.SyncConfig", return_value=mock_valid_config),
         patch("src.main.Git"),
-        patch("src.main.AzureDevOpsProvider"),
+        patch("src.main.get_origin_provider"),
         patch("src.main.GitHubProvider"),
         patch("src.main.tempfile.mkdtemp", side_effect=tracked_mkdtemp),
         patch("src.main.SyncManager.execute", side_effect=RuntimeError("Sync error")),
@@ -67,7 +67,7 @@ def test_main_returns_1_on_adapter_exception(mock_valid_config: SyncConfig) -> N
     with (
         patch("src.main.SyncConfig", return_value=mock_valid_config),
         patch("src.main.Git"),
-        patch("src.main.AzureDevOpsProvider"),
+        patch("src.main.get_origin_provider"),
         patch("src.main.GitHubProvider"),
         patch("src.main.SyncManager.execute", return_value=dummy_result),
         patch("src.main.GithubActionOutputAdapter", return_value=mock_adapter),
@@ -89,7 +89,7 @@ def test_main_returns_1_when_result_has_errors(mock_valid_config: SyncConfig) ->
     with (
         patch("src.main.SyncConfig", return_value=mock_valid_config),
         patch("src.main.Git"),
-        patch("src.main.AzureDevOpsProvider"),
+        patch("src.main.get_origin_provider"),
         patch("src.main.GitHubProvider"),
         patch("src.main.SyncManager.execute", return_value=dummy_result),
         patch("src.main.GithubActionOutputAdapter", return_value=mock_adapter),
@@ -115,7 +115,7 @@ def test_main_returns_0_on_success(mock_valid_config: SyncConfig) -> None:
     with (
         patch("src.main.SyncConfig", return_value=mock_valid_config),
         patch("src.main.Git"),
-        patch("src.main.AzureDevOpsProvider"),
+        patch("src.main.get_origin_provider"),
         patch("src.main.GitHubProvider"),
         patch("src.main.SyncManager.execute", return_value=dummy_result),
         patch("src.main.GithubActionOutputAdapter", return_value=mock_adapter),
@@ -138,7 +138,7 @@ def test_main_returns_0_when_already_disabled(mock_valid_config: SyncConfig) -> 
     with (
         patch("src.main.SyncConfig", return_value=mock_valid_config),
         patch("src.main.Git"),
-        patch("src.main.AzureDevOpsProvider"),
+        patch("src.main.get_origin_provider"),
         patch("src.main.GitHubProvider"),
         patch("src.main.SyncManager.execute", return_value=dummy_result),
         patch("src.main.GithubActionOutputAdapter", return_value=mock_adapter),

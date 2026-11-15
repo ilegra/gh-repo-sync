@@ -7,11 +7,19 @@ branding:
 
 inputs:
   origin-url:
-    description: 'Repository URL of the Origin (Azure DevOps)'
+    description: 'Repository URL of the Origin (Azure DevOps or Bitbucket Cloud)'
     required: true
   origin-token:
-    description: 'Access Token / PAT for Origin'
+    description: 'Access Token / PAT / App Password for Origin'
     required: true
+  origin-username:
+    description: 'Username for Origin authentication (e.g. Bitbucket Cloud App Password username)'
+    required: false
+    default: ''
+  origin-provider:
+    description: 'Optional explicit origin provider override (e.g. "ado", "bitbucket")'
+    required: false
+    default: ''
   destination-url:
     description: 'Repository URL of the Destination (GitHub)'
     required: true
@@ -57,6 +65,8 @@ runs:
   env:
     ORIGIN_URL: ${{ inputs.origin-url }}
     ORIGIN_TOKEN: ${{ inputs.origin-token }}
+    ORIGIN_USERNAME: ${{ inputs.origin-username }}
+    ORIGIN_PROVIDER: ${{ inputs.origin-provider }}
     DESTINATION_URL: ${{ inputs.destination-url }}
     DESTINATION_TOKEN: ${{ inputs.destination-token }}
     ORIGIN_EXCLUSIVE_PATHS: ${{ inputs.origin-exclusive-paths }}
