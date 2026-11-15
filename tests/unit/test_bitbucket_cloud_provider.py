@@ -113,7 +113,8 @@ def test_bitbucket_is_repo_disabled_read_only_true() -> None:
     )
 
     assert provider.is_repo_disabled() is True
-    assert responses.calls[0].request.headers["Authorization"].startswith("Basic ")
+    auth_header = responses.calls[0].request.headers["Authorization"]
+    assert str(auth_header).startswith("Basic ")
 
 
 @responses.activate
