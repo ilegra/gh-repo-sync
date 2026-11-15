@@ -1,8 +1,26 @@
+import urllib.parse
+
 from src.config import SyncConfig
 from src.git.client import Git
 from src.providers.azure_devops import AzureDevOpsProvider
 from src.providers.base import OriginProvider
 from src.providers.bitbucket_cloud import BitbucketCloudProvider
+
+
+def _extract_hostname(url: str) -> str:
+    """Safely extracts the lowercase hostname from a git or http/https URL."""
+    clean_url = url.strip()
+    if clean_url.startswith("git@"):
+        # e.g. git@bitbucket.org:workspace/repo.git
+        domain_part = clean_url.split("git@", 1)[1].split(":", 1)[0]
+        return domain_part.lower()
+
+    parsed = urllib.parse.urlparse(clean_url)
+    if parsed.netloc:
+        hostname = parsed.hostname or ""
+        return hostname.lower()
+
+    return ""
 
 
 def get_origin_provider(
@@ -46,8 +64,8 @@ def get_origin_provider(
             )
         raise ValueError(f"Unsupported origin provider: '{config.origin_provider}'")
 
-    url_lower = config.origin_url.lower()
-    if "bitbucket.org" in url_lower:
+    hostname = _extract_hostname(config.origin_url)
+    if hostname == "bitbucket.org" or hostname.endswith(".bitbucket.org"):
         return BitbucketCloudProvider(
             repo_url=config.origin_url,
             token=config.origin_token,
@@ -55,7 +73,12 @@ def get_origin_provider(
             git=git_client,
             remote_name=remote_name,
         )
-    if "dev.azure.com" in url_lower or "visualstudio.com" in url_lower:
+    if (
+        hostname == "dev.azure.com"
+        or hostname.endswith(".dev.azure.com")
+        or hostname == "visualstudio.com"
+        or hostname.endswith(".visualstudio.com")
+    ):
         return AzureDevOpsProvider(
             repo_url=config.origin_url,
             pat=config.origin_token,
