@@ -58,8 +58,8 @@ Use `gh-repo-sync` to perform a clean, one-time ad-hoc migration from any suppor
 ## Extensible Architecture
 
 `gh-repo-sync` is architected with a modular provider abstraction designed to support multiple origin and destination Git platforms:
-- **Current Support**: Origin support is fully implemented and tested for **Azure DevOps (ADO)**, with destination support for **GitHub**.
-- **Extensible Providers**: The underlying engine defines clean repository and provider interfaces, allowing straightforward extension for additional origins (such as GitLab, Bitbucket, AWS CodeCommit, or self-hosted Git servers) in future releases.
+- **Current Support**: Origin support is fully implemented and tested for **Azure DevOps (ADO)** and **Bitbucket Cloud**, with destination support for **GitHub**.
+- **Extensible Providers**: The underlying engine defines clean repository and provider interfaces, allowing straightforward extension for additional origins (such as GitLab, AWS CodeCommit, or self-hosted Git servers) in future releases.
 
 
 ## Action Avoidance (`[skip actions]`)
@@ -98,12 +98,32 @@ jobs:
           committer-email: 'github-actions[bot]@users.noreply.github.com'
 ```
 
+### Bitbucket Cloud Origin Setup
+
+`gh-repo-sync` supports **Bitbucket Cloud** (`bitbucket.org`) using either **Repository/Workspace Access Tokens** or **App Passwords**:
+
+- **Access Token (Recommended)**: Provide `origin-token` only (no `origin-username`). Uses `x-token-auth` for Git and Bearer auth for the Bitbucket REST API v2.0.
+- **App Password**: Provide both `origin-username` and `origin-token`. Recommended App Password permissions: **Repositories: Read** (no write permissions needed).
+
+```yaml
+      - name: Sync from Bitbucket Cloud
+        uses: ilegra/gh-repo-sync@v0
+        with:
+          origin-url: 'https://bitbucket.org/workspace/repo'
+          origin-username: ${{ secrets.BITBUCKET_USERNAME }} # Omit if using an Access Token
+          origin-token: ${{ secrets.BITBUCKET_TOKEN }}
+          destination-url: 'https://github.com/org/repo.git'
+          destination-token: ${{ secrets.GH_TOKEN }}
+```
+
 ### Action Inputs
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `origin-url` | **Yes** | — | Repository URL of the Origin (Azure DevOps). |
-| `origin-token` | **Yes** | — | Personal Access Token (PAT) for the Origin. |
+| `origin-url` | **Yes** | — | Repository URL of the Origin (Azure DevOps or Bitbucket Cloud). |
+| `origin-token` | **Yes** | — | Personal Access Token (PAT), App Password, or Access Token for the Origin. |
+| `origin-username` | No | `""` | Username for Origin authentication (used for Bitbucket Cloud App Passwords). |
+| `origin-provider` | No | `""` | Optional explicit origin provider override (`ado`, `bitbucket`). Auto-detected from `origin-url` when omitted. |
 | `destination-url` | **Yes** | — | Repository URL of the Destination (GitHub). |
 | `destination-token` | **Yes** | — | GitHub Token or App installation token with push permissions. |
 | `origin-exclusive-paths` | No | `""` | Comma-separated paths on Origin to purge from sync (e.g. `.pipeline`, `azure-pipelines*.yml`). |
@@ -303,10 +323,12 @@ For standalone or local container execution, the following environment variables
 | Environment Variable | Description |
 |---------------------|-------------|
 | `ORIGIN_URL` | The repository URL of the Origin. |
-| `ORIGIN_TOKEN` | Access Token / PAT for the Origin. |
+| `ORIGIN_TOKEN` | Access Token / PAT / App Password for the Origin (alias: `BITBUCKET_TOKEN`). |
+| `ORIGIN_USERNAME` | Optional Origin username for App Password auth (alias: `BITBUCKET_USERNAME`). |
+| `ORIGIN_PROVIDER` | Optional explicit origin provider override (`ado`, `bitbucket`; alias: `ORIGIN_TYPE`). |
 | `DESTINATION_URL` | The repository URL of the Destination (GitHub). |
 | `DESTINATION_TOKEN` | GitHub Token or App installation token. |
-| `ORIGIN_EXCLUSIVE_PATHS` | Comma-separated paths on Origin to purge from sync (default: `.pipeline`, `azure-pipelines*.yml`). |
+| `ORIGIN_EXCLUSIVE_PATHS` | Comma-separated paths on Origin to purge from sync (default: `.pipeline`, `.pipelines`, `azure-pipelines*.yml`, `azure-pipelines*.yaml`, `bitbucket-pipelines.yml`). |
 | `DESTINATION_EXCLUSIVE_PATHS` | Comma-separated paths on Destination that must remain protected (default: `.github`). |
 | `BRANCH_MAPPING` | Branch mapping `origin:dest` (e.g., `master:main`). |
 | `COMMITTER_NAME` | Git bot author/committer name fallback (default: `github-actions[bot]`). |

@@ -13,6 +13,8 @@ class SyncConfig(BaseSettings):
 
     origin_url: str = Field(..., validation_alias="ORIGIN_URL")
     origin_token: str = Field(..., validation_alias="ORIGIN_TOKEN")
+    origin_username: str | None = Field(None, validation_alias="ORIGIN_USERNAME")
+    origin_provider: str | None = Field(None, validation_alias="ORIGIN_PROVIDER")
     destination_url: str = Field(..., validation_alias="DESTINATION_URL")
     destination_token: str = Field(..., validation_alias="DESTINATION_TOKEN")
 
@@ -58,7 +60,14 @@ class SyncConfig(BaseSettings):
         # Support fallback environment variables matching the original script
         aliases = {
             "origin_url": ["ORIGIN_URL", "ADO_URL", "ADO_REPO_URL"],
-            "origin_token": ["ORIGIN_TOKEN", "ADO_PAT", "ORIGIN_PAT"],
+            "origin_token": [
+                "ORIGIN_TOKEN",
+                "ADO_PAT",
+                "ORIGIN_PAT",
+                "BITBUCKET_TOKEN",
+            ],
+            "origin_username": ["ORIGIN_USERNAME", "BITBUCKET_USERNAME"],
+            "origin_provider": ["ORIGIN_PROVIDER", "ORIGIN_TYPE"],
             "destination_url": ["DESTINATION_URL", "GH_URL", "GH_REPO_URL"],
             "destination_token": ["DESTINATION_TOKEN", "GH_TOKEN"],
             "origin_exclusive_paths_raw": [
@@ -122,6 +131,7 @@ class SyncConfig(BaseSettings):
             ".pipelines",
             "azure-pipelines*.yml",
             "azure-pipelines*.yaml",
+            "bitbucket-pipelines.yml",
         ]
         custom = []
         if self.origin_exclusive_paths_raw:
