@@ -1,11 +1,101 @@
 import re
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
     from src.git.client import Git
+
+
+@dataclass
+class PullRequest:
+    """Pure data container representing a pull request."""
+
+    id: str
+    title: str
+    description: str
+    source_branch: str
+    target_branch: str
+    author: str
+    state: str = "open"
+    is_draft: bool = False
+    is_from_fork: bool = False
+    url: str = ""
+    number: int | None = None
+
+
+@dataclass
+class PullRequestComment:
+    """Pure data container representing a pull request comment."""
+
+    id: str
+    body: str
+    author: str
+    created_at: str = ""
+    updated_at: str = ""
+    file_path: str | None = None
+    line: int | None = None
+    is_resolved: bool = False
+    resolved_by: str | None = None
+    node_id: str | None = None
+
+
+@dataclass
+class PrSyncResult:
+    """Pure data container representing pull request synchronization results."""
+
+    created_prs: list[int] = field(default_factory=list)
+    updated_prs: list[int] = field(default_factory=list)
+    closed_prs: list[int] = field(default_factory=list)
+    synced_pr_comments: int = 0
+    errors: list[str] = field(default_factory=list)
+
+
+class PrExporter(ABC):
+    """Abstract interface for exporting pull requests and comments from an origin."""
+
+    @abstractmethod
+    def get_open_pull_requests(self) -> list[PullRequest]:
+        """Returns all currently open pull requests from the origin repository."""
+        pass
+
+    @abstractmethod
+    def get_pull_request(self, pr_id: str) -> PullRequest | None:
+        """Returns a single pull request by origin ID, or None if not found."""
+        pass
+
+    @abstractmethod
+    def get_pull_request_comments(self, pr_id: str) -> list[PullRequestComment]:
+        """Returns all non-deleted comments for the given origin pull request ID."""
+        pass
+
+
+class PrImporter(ABC):
+    """Abstract interface for reconciling pull requests on a destination provider."""
+
+    @abstractmethod
+    def reconcile(
+        self,
+        origin_prs: list[PullRequest],
+        pr_exporter: PrExporter,
+        branch_mapping: dict[str, str] | None = None,
+        available_branches: set[str] | None = None,
+    ) -> PrSyncResult:
+        """
+        Reconciles open and completed pull requests and their comments on destination.
+
+        Args:
+            origin_prs: Open pull requests fetched from the origin provider.
+            pr_exporter: Exporter used to fetch comments and final PR states.
+            branch_mapping: Optional mapping from origin to destination branch names.
+            available_branches: Optional set of destination branch names that exist.
+
+        Returns:
+            PrSyncResult: Summary of created, updated, closed PRs, comments, and errors.
+        """
+        pass
 
 
 class Branch(BaseModel):
@@ -80,6 +170,10 @@ class OriginProvider(ABC):
         """
         pass
 
+    def get_pr_exporter(self) -> PrExporter | None:
+        """Returns an optional PR exporter if supported by this origin provider."""
+        return None
+
 
 class DestinationProvider(ABC):
     """Abstract interface representing a destination repository provider."""
@@ -137,3 +231,7 @@ class DestinationProvider(ABC):
             str: Full remote reference path for git operations.
         """
         pass
+
+    def get_pr_importer(self) -> PrImporter | None:
+        """Returns an optional PR importer if supported by this destination provider."""
+        return None

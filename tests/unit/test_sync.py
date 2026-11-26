@@ -489,3 +489,185 @@ def test_sync_mixed_path_changes() -> None:
     # Updated because syncable changes were present
     assert result.updated_branches == ["main"]
     assert result.removed_branches == []
+
+
+class TestSyncManager:
+    def test_given_sync_prs_disabled_when_executing_sync_then_skips_pr_reconciliation(
+        self,
+    ) -> None:
+        from typing import cast
+
+        manager, _ = _create_mock_sync_manager(
+            origin_branches=[
+                Branch(name="main", remote_ref="origin/main", is_default=True)
+            ],
+            dest_branches=[
+                Branch(name="main", remote_ref="dest/main", is_default=True)
+            ],
+            merge_base_true_for=[("origin/main", "dest/main")],
+        )
+        manager.config.sync_pull_requests = False
+
+        with patch("src.core.sync.Git") as MockGit:
+            MockGit.return_value = MagicMock()
+            result = manager.execute()
+
+        cast(MagicMock, manager.origin_provider.get_pr_exporter).assert_not_called()
+        cast(
+            MagicMock, manager.destination_provider.get_pr_importer
+        ).assert_not_called()
+        assert result.created_prs == []
+
+    def test_given_sync_prs_enabled_when_executing_sync_then_reconciles_prs_before_pruning_branches(
+        self,
+    ) -> None:
+        from typing import Any, cast
+
+        from src.providers.base import PrSyncResult
+
+        call_order: list[str] = []
+        manager, _ = _create_mock_sync_manager(
+            origin_branches=[
+                Branch(name="main", remote_ref="origin/main", is_default=True)
+            ],
+            dest_branches=[
+                Branch(name="main", remote_ref="dest/main", is_default=True),
+                Branch(name="old", remote_ref="dest/old", is_default=False),
+            ],
+            merge_base_true_for=[("origin/main", "dest/main")],
+        )
+        manager.config.sync_pull_requests = True
+
+        mock_exporter = MagicMock()
+        mock_exporter.get_open_pull_requests.return_value = []
+        mock_importer = MagicMock()
+
+        def _reconcile_side_effect(**kwargs: Any) -> PrSyncResult:
+            call_order.append("reconcile")
+            return PrSyncResult(closed_prs=[7])
+
+        mock_importer.reconcile.side_effect = _reconcile_side_effect
+        cast(
+            MagicMock, manager.origin_provider.get_pr_exporter
+        ).return_value = mock_exporter
+        cast(
+            MagicMock, manager.destination_provider.get_pr_importer
+        ).return_value = mock_importer
+
+        orig_prune = manager._prune_deleted_origin_branches
+
+        def _prune_wrapper(*args: Any, **kwargs: Any) -> tuple[list[str], list[str]]:
+            call_order.append("prune")
+            return orig_prune(*args, **kwargs)
+
+        with (
+            patch("src.core.sync.Git") as MockGit,
+            patch.object(
+                manager, "_prune_deleted_origin_branches", side_effect=_prune_wrapper
+            ),
+        ):
+            MockGit.return_value = MagicMock()
+            result = manager.execute()
+
+        assert call_order == ["reconcile", "prune"]
+        assert result.closed_prs == [7]
+
+    def test_given_unsupported_origin_provider_when_executing_sync_with_prs_enabled_then_logs_warning_and_continues(
+        self,
+    ) -> None:
+        from typing import cast
+
+        manager, _ = _create_mock_sync_manager(
+            origin_branches=[
+                Branch(name="main", remote_ref="origin/main", is_default=True)
+            ],
+            dest_branches=[
+                Branch(name="main", remote_ref="dest/main", is_default=True)
+            ],
+            merge_base_true_for=[("origin/main", "dest/main")],
+        )
+        manager.config.sync_pull_requests = True
+        cast(MagicMock, manager.origin_provider.get_pr_exporter).return_value = None
+        cast(
+            MagicMock, manager.destination_provider.get_pr_importer
+        ).return_value = MagicMock()
+
+        with patch("src.core.sync.Git") as MockGit:
+            MockGit.return_value = MagicMock()
+            result = manager.execute()
+
+        assert result.errors == []
+        assert result.created_prs == []
+
+    def test_given_unsupported_destination_provider_when_executing_sync_with_prs_enabled_then_logs_warning_and_continues(
+        self,
+    ) -> None:
+        from typing import cast
+
+        manager, _ = _create_mock_sync_manager(
+            origin_branches=[
+                Branch(name="main", remote_ref="origin/main", is_default=True)
+            ],
+            dest_branches=[
+                Branch(name="main", remote_ref="dest/main", is_default=True)
+            ],
+            merge_base_true_for=[("origin/main", "dest/main")],
+        )
+        manager.config.sync_pull_requests = True
+        cast(
+            MagicMock, manager.origin_provider.get_pr_exporter
+        ).return_value = MagicMock()
+        cast(
+            MagicMock, manager.destination_provider.get_pr_importer
+        ).return_value = None
+
+        with patch("src.core.sync.Git") as MockGit:
+            MockGit.return_value = MagicMock()
+            result = manager.execute()
+
+        assert result.errors == []
+        assert result.created_prs == []
+
+    def test_given_pr_sync_results_when_executing_sync_then_propagates_metrics_and_errors_to_sync_result(
+        self,
+    ) -> None:
+        from typing import cast
+
+        from src.providers.base import PrSyncResult
+
+        manager, _ = _create_mock_sync_manager(
+            origin_branches=[
+                Branch(name="main", remote_ref="origin/main", is_default=True)
+            ],
+            dest_branches=[
+                Branch(name="main", remote_ref="dest/main", is_default=True)
+            ],
+            merge_base_true_for=[("origin/main", "dest/main")],
+        )
+        manager.config.sync_pull_requests = True
+        mock_exporter = MagicMock()
+        mock_exporter.get_open_pull_requests.return_value = []
+        mock_importer = MagicMock()
+        mock_importer.reconcile.return_value = PrSyncResult(
+            created_prs=[1],
+            updated_prs=[2],
+            closed_prs=[3],
+            synced_pr_comments=4,
+            errors=["PR error"],
+        )
+        cast(
+            MagicMock, manager.origin_provider.get_pr_exporter
+        ).return_value = mock_exporter
+        cast(
+            MagicMock, manager.destination_provider.get_pr_importer
+        ).return_value = mock_importer
+
+        with patch("src.core.sync.Git") as MockGit:
+            MockGit.return_value = MagicMock()
+            result = manager.execute()
+
+        assert result.created_prs == [1]
+        assert result.updated_prs == [2]
+        assert result.closed_prs == [3]
+        assert result.synced_pr_comments == 4
+        assert "PR error" in result.errors
