@@ -70,6 +70,10 @@ def main(argv: list[str] | None = None) -> int:
         print("  BRANCH_MAPPING               Branch mapping origin:dest")
         print("  COMMITTER_NAME               Committer name fallback")
         print("  COMMITTER_EMAIL              Committer email fallback")
+        print(
+            "  SYNC_PULL_REQUESTS           "
+            "Sync open pull requests and comments (true/false)"
+        )
         return 0
 
     _setup_logging()

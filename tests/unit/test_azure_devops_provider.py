@@ -298,3 +298,15 @@ def test_ado_get_default_branch_name_without_git() -> None:
         git=None,
     )
     assert provider._get_default_branch_name() == "main"
+
+
+class TestAzureDevOpsProvider:
+    def test_given_azure_devops_provider_when_getting_pr_exporter_then_returns_none(
+        self,
+    ) -> None:
+        provider = AzureDevOpsProvider(
+            repo_url="https://dev.azure.com/my-org/my-project/_git/my-repo",
+            pat="my-pat-secret",
+            git=None,
+        )
+        assert provider.get_pr_exporter() is None

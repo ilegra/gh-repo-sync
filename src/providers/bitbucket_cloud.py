@@ -9,9 +9,220 @@ from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 
 from src.git.client import Git
-from src.providers.base import Branch, OriginProvider, validate_branch_name
+from src.providers.base import (
+    Branch,
+    OriginProvider,
+    PrExporter,
+    PullRequest,
+    PullRequestComment,
+    validate_branch_name,
+)
 
 logger = structlog.get_logger(__name__)
+
+
+class BitbucketCloudPrExporter(PrExporter):
+    """Pull request exporter implementation for Bitbucket Cloud."""
+
+    def __init__(
+        self,
+        workspace: str,
+        repo_slug: str,
+        session: requests.Session,
+        auth_headers: dict[str, str],
+    ):
+        """
+        Initializes the Bitbucket Cloud PR exporter.
+
+        Args:
+            workspace: Bitbucket Cloud workspace slug.
+            repo_slug: Bitbucket Cloud repository slug.
+            session: Configured requests.Session with retry strategy.
+            auth_headers: Authentication headers for Bitbucket Cloud API.
+        """
+        self.workspace = workspace
+        self.repo_slug = repo_slug
+        self._session = session
+        self._auth_headers = auth_headers
+
+    def _base_api_url(self) -> str:
+        workspace_q = urllib.parse.quote(self.workspace, safe="")
+        repo_q = urllib.parse.quote(self.repo_slug, safe="")
+        return f"https://api.bitbucket.org/2.0/repositories/{workspace_q}/{repo_q}"
+
+    def _parse_pull_request(self, item: dict[str, Any]) -> PullRequest:
+        source = item.get("source") or {}
+        destination = item.get("destination") or {}
+        source_branch = (source.get("branch") or {}).get("name") or ""
+        target_branch = (destination.get("branch") or {}).get("name") or ""
+
+        source_repo_full = (source.get("repository") or {}).get("full_name") or ""
+        dest_repo_full = (destination.get("repository") or {}).get(
+            "full_name"
+        ) or f"{self.workspace}/{self.repo_slug}"
+        is_from_fork = bool(
+            source_repo_full and source_repo_full.lower() != dest_repo_full.lower()
+        )
+
+        author_obj = item.get("author") or {}
+        author = (
+            author_obj.get("display_name") or author_obj.get("nickname") or "Unknown"
+        )
+        html_url = ((item.get("links") or {}).get("html") or {}).get("href") or ""
+
+        return PullRequest(
+            id=str(item.get("id", "")),
+            title=str(item.get("title") or ""),
+            description=str(item.get("description") or ""),
+            source_branch=str(source_branch),
+            target_branch=str(target_branch),
+            author=str(author),
+            state=str(item.get("state") or "OPEN").lower(),
+            is_draft=bool(item.get("draft", False)),
+            is_from_fork=is_from_fork,
+            url=str(html_url),
+        )
+
+    def _parse_comment(self, item: dict[str, Any]) -> PullRequestComment | None:
+        if item.get("deleted", False):
+            return None
+
+        raw_body = (item.get("content") or {}).get("raw")
+        if not isinstance(raw_body, str) or not raw_body.strip():
+            return None
+
+        user_obj = item.get("user") or {}
+        author = user_obj.get("display_name") or user_obj.get("nickname") or "Unknown"
+
+        inline = item.get("inline") or {}
+        file_path = inline.get("path") if isinstance(inline, dict) else None
+        line = None
+        if isinstance(inline, dict):
+            line = (
+                inline.get("to") if inline.get("to") is not None else inline.get("from")
+            )
+
+        resolution = item.get("resolution")
+        is_resolved = isinstance(resolution, dict) and bool(resolution)
+        resolved_by = None
+        if is_resolved and isinstance(resolution, dict):
+            res_user = resolution.get("user") or {}
+            resolved_by = res_user.get("display_name") or res_user.get("nickname")
+
+        return PullRequestComment(
+            id=str(item.get("id", "")),
+            body=raw_body,
+            author=str(author),
+            created_at=str(item.get("created_on") or ""),
+            updated_at=str(item.get("updated_on") or ""),
+            file_path=str(file_path) if file_path else None,
+            line=int(line) if isinstance(line, int) else None,
+            is_resolved=is_resolved,
+            resolved_by=str(resolved_by) if resolved_by else None,
+        )
+
+    def get_open_pull_requests(self) -> list[PullRequest]:
+        """Returns all currently open pull requests from Bitbucket Cloud."""
+        url: str | None = f"{self._base_api_url()}/pullrequests?state=OPEN&pagelen=50"
+        pull_requests: list[PullRequest] = []
+
+        try:
+            while url:
+                response = self._session.get(
+                    url, headers=self._auth_headers, timeout=15
+                )
+                if response.status_code in (401, 403):
+                    logger.warning(
+                        "Insufficient permissions to read Bitbucket Cloud PRs "
+                        "(ensure 'Pull requests: Read' scope is granted)",
+                        status_code=response.status_code,
+                    )
+                    return []
+                if response.status_code != 200:
+                    logger.warning(
+                        "Bitbucket Cloud PR API returned non-200 status",
+                        status_code=response.status_code,
+                        body=response.text[:200],
+                    )
+                    return []
+
+                data: dict[str, Any] = response.json()
+                for item in data.get("values") or []:
+                    if isinstance(item, dict):
+                        pull_requests.append(self._parse_pull_request(item))
+                next_url = data.get("next")
+                url = str(next_url) if next_url else None
+        except Exception as e:
+            logger.warning(
+                "Failed to fetch open pull requests from Bitbucket Cloud",
+                error=str(e),
+            )
+            return []
+
+        return pull_requests
+
+    def get_pull_request(self, pr_id: str) -> PullRequest | None:
+        """Returns a single Bitbucket Cloud pull request by ID, or None if not found."""
+        pr_q = urllib.parse.quote(str(pr_id), safe="")
+        url = f"{self._base_api_url()}/pullrequests/{pr_q}"
+
+        try:
+            response = self._session.get(url, headers=self._auth_headers, timeout=15)
+            if response.status_code == 200:
+                data: dict[str, Any] = response.json()
+                return self._parse_pull_request(data)
+            if response.status_code == 404:
+                return None
+            logger.warning(
+                "Bitbucket Cloud PR lookup returned non-200 status",
+                pr_id=pr_id,
+                status_code=response.status_code,
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to fetch pull request from Bitbucket Cloud",
+                pr_id=pr_id,
+                error=str(e),
+            )
+        return None
+
+    def get_pull_request_comments(self, pr_id: str) -> list[PullRequestComment]:
+        """Returns all non-deleted comments for the given Bitbucket Cloud PR ID."""
+        pr_q = urllib.parse.quote(str(pr_id), safe="")
+        url: str | None = (
+            f"{self._base_api_url()}/pullrequests/{pr_q}/comments?pagelen=100"
+        )
+        comments: list[PullRequestComment] = []
+
+        try:
+            while url:
+                response = self._session.get(
+                    url, headers=self._auth_headers, timeout=15
+                )
+                if response.status_code != 200:
+                    logger.warning(
+                        "Bitbucket Cloud PR comments API returned non-200 status",
+                        pr_id=pr_id,
+                        status_code=response.status_code,
+                    )
+                    return comments
+
+                data: dict[str, Any] = response.json()
+                for item in data.get("values") or []:
+                    if isinstance(item, dict):
+                        parsed = self._parse_comment(item)
+                        if parsed is not None:
+                            comments.append(parsed)
+                next_url = data.get("next")
+                url = str(next_url) if next_url else None
+        except Exception as e:
+            logger.warning(
+                "Failed to fetch pull request comments from Bitbucket Cloud",
+                pr_id=pr_id,
+                error=str(e),
+            )
+
+        return comments
 
 
 class BitbucketCloudProvider(OriginProvider):
@@ -42,6 +253,7 @@ class BitbucketCloudProvider(OriginProvider):
         self.remote_name = remote_name
         self._session: requests.Session | None = None
         self._repo_metadata: dict[str, Any] | None = None
+        self._pr_exporter: BitbucketCloudPrExporter | None = None
 
     def _get_session(self) -> requests.Session:
         if self._session is None:
@@ -199,6 +411,22 @@ class BitbucketCloudProvider(OriginProvider):
             str: Full remote reference path for git operations.
         """
         return f"refs/remotes/{self.remote_name}/{branch_name}"
+
+    def get_pr_exporter(self) -> PrExporter | None:
+        """Returns a BitbucketCloudPrExporter if the repository URL can be parsed."""
+        if self._pr_exporter is not None:
+            return self._pr_exporter
+        parsed = self._parse_bitbucket_url()
+        if not parsed:
+            return None
+        workspace, repo_slug = parsed
+        self._pr_exporter = BitbucketCloudPrExporter(
+            workspace=workspace,
+            repo_slug=repo_slug,
+            session=self._get_session(),
+            auth_headers=self._get_auth_headers(),
+        )
+        return self._pr_exporter
 
     def _get_default_branch_name(self) -> str:
         metadata = self._fetch_repo_metadata()
