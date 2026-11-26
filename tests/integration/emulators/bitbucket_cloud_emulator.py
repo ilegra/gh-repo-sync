@@ -163,10 +163,20 @@ class BitbucketCloudEmulatorHandler(http.server.BaseHTTPRequestHandler):
                 "updated_on": "2026-01-01T00:00:00Z",
             }
             if payload.get("file_path"):
-                comment["inline"] = {
-                    "path": payload["file_path"],
-                    "to": payload.get("line"),
-                }
+                inline: dict[str, Any] = {"path": payload["file_path"]}
+                if "to" in payload:
+                    inline["to"] = payload["to"]
+                elif "line" in payload:
+                    inline["to"] = payload["line"]
+                if "from" in payload:
+                    inline["from"] = payload["from"]
+                if "start_to" in payload:
+                    inline["start_to"] = payload["start_to"]
+                if "start_from" in payload:
+                    inline["start_from"] = payload["start_from"]
+                comment["inline"] = inline
+            if payload.get("parent_id") is not None:
+                comment["parent"] = {"id": int(payload["parent_id"])}
             if payload.get("is_resolved"):
                 comment["resolution"] = {
                     "user": {"display_name": payload.get("resolved_by", "Alice")}
@@ -216,6 +226,25 @@ class BitbucketCloudEmulatorHandler(http.server.BaseHTTPRequestHandler):
                     for r in (payload.get("reviewers") or [])
                 ]
             self._send_json(pr)
+            return
+
+        m_cm = re.match(r"^/_seed/pullrequests/([^/]+)/comments/([^/]+)$", path)
+        if m_cm:
+            pr_id, cm_id = m_cm.group(1), m_cm.group(2)
+            comment_obj = _STATE["comments"].get(pr_id, {}).get(cm_id)
+            if not comment_obj:
+                self._send_json({"error": "comment not found"}, status=404)
+                return
+            if "body" in payload:
+                comment_obj["content"] = {"raw": payload["body"]}
+            if "is_resolved" in payload:
+                if payload["is_resolved"]:
+                    comment_obj["resolution"] = {
+                        "user": {"display_name": payload.get("resolved_by", "Alice")}
+                    }
+                else:
+                    comment_obj.pop("resolution", None)
+            self._send_json(comment_obj)
             return
 
         self._send_json({"error": f"Unhandled PATCH {path}"}, status=404)

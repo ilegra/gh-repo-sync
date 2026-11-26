@@ -26,6 +26,7 @@ class PullRequest:
     number: int | None = None
     reviewers: list[str] = field(default_factory=list)
     assignees: list[str] = field(default_factory=list)
+    head_sha: str = ""
 
 
 @dataclass
@@ -39,6 +40,10 @@ class PullRequestComment:
     updated_at: str = ""
     file_path: str | None = None
     line: int | None = None
+    side: str | None = None
+    start_line: int | None = None
+    start_side: str | None = None
+    parent_id: str | None = None
     is_resolved: bool = False
     resolved_by: str | None = None
     node_id: str | None = None

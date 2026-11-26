@@ -12,10 +12,16 @@ from typing import Any
 _STATE: dict[str, Any] = {
     "next_pr_number": 1,
     "next_comment_id": 1,
+    "next_thread_id": 1,
     "prs": {},
     "comments_by_pr": {},
     "comments_by_id": {},
     "comments_by_node_id": {},
+    "review_comments_by_pr": {},
+    "review_comments_by_id": {},
+    "review_threads_by_pr": {},
+    "review_threads_by_id": {},
+    "reject_review_comment_paths": set(),
     "org_members": {},
     "reviews_by_pr": {},
 }
@@ -24,10 +30,16 @@ _STATE: dict[str, Any] = {
 def _reset_state() -> None:
     _STATE["next_pr_number"] = 1
     _STATE["next_comment_id"] = 1
+    _STATE["next_thread_id"] = 1
     _STATE["prs"] = {}
     _STATE["comments_by_pr"] = {}
     _STATE["comments_by_id"] = {}
     _STATE["comments_by_node_id"] = {}
+    _STATE["review_comments_by_pr"] = {}
+    _STATE["review_comments_by_id"] = {}
+    _STATE["review_threads_by_pr"] = {}
+    _STATE["review_threads_by_id"] = {}
+    _STATE["reject_review_comment_paths"] = set()
     _STATE["org_members"] = {}
     _STATE["reviews_by_pr"] = {}
 
@@ -88,6 +100,13 @@ class GitHubEmulatorHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(_STATE["reviews_by_pr"].get(pr_num, []))
             return
 
+        # GET /repos/{owner}/{repo}/pulls/{number}/comments
+        m_rcm = re.match(r"^/repos/[^/]+/[^/]+/pulls/(\d+)/comments$", path)
+        if m_rcm:
+            pr_num = int(m_rcm.group(1))
+            self._send_json(_STATE["review_comments_by_pr"].get(pr_num, []))
+            return
+
         # GET /repos/{owner}/{repo}/issues/{number}/comments
         m_cm = re.match(r"^/repos/[^/]+/[^/]+/issues/(\d+)/comments$", path)
         if m_cm:
@@ -115,6 +134,13 @@ class GitHubEmulatorHandler(http.server.BaseHTTPRequestHandler):
             self._send_json({"org": org, "members": members}, status=201)
             return
 
+        if path == "/_seed/reject_review_comment_path":
+            reject_path = str(payload.get("path") or "")
+            if reject_path:
+                _STATE["reject_review_comment_paths"].add(reject_path)
+            self._send_json({"path": reject_path}, status=201)
+            return
+
         # POST /repos/{owner}/{repo}/pulls
         if re.match(r"^/repos/[^/]+/[^/]+/pulls$", path):
             num = _STATE["next_pr_number"]
@@ -123,7 +149,7 @@ class GitHubEmulatorHandler(http.server.BaseHTTPRequestHandler):
                 "number": num,
                 "title": payload.get("title", ""),
                 "body": payload.get("body", ""),
-                "head": {"ref": payload.get("head", "")},
+                "head": {"ref": payload.get("head", ""), "sha": f"emu-sha-{num}"},
                 "base": {"ref": payload.get("base", "")},
                 "draft": bool(payload.get("draft", False)),
                 "state": "open",
@@ -134,6 +160,8 @@ class GitHubEmulatorHandler(http.server.BaseHTTPRequestHandler):
             }
             _STATE["prs"][num] = pr
             _STATE["comments_by_pr"][num] = []
+            _STATE["review_comments_by_pr"][num] = []
+            _STATE["review_threads_by_pr"][num] = []
             _STATE["reviews_by_pr"][num] = []
             self._send_json(pr, status=201)
             return
@@ -168,6 +196,75 @@ class GitHubEmulatorHandler(http.server.BaseHTTPRequestHandler):
                     pr["requested_reviewers"].append({"login": login})
                     existing.add(login)
             self._send_json(pr, status=201)
+            return
+
+        # POST /repos/{owner}/{repo}/pulls/{number}/comments
+        m_rcm = re.match(r"^/repos/[^/]+/[^/]+/pulls/(\d+)/comments$", path)
+        if m_rcm:
+            pr_num = int(m_rcm.group(1))
+            req_path = payload.get("path")
+            if req_path and req_path in _STATE["reject_review_comment_paths"]:
+                self._send_json(
+                    {"message": "Validation Failed", "errors": ["outdated hunk"]},
+                    status=422,
+                )
+                return
+
+            in_reply_to = payload.get("in_reply_to")
+            target_thread: dict[str, Any] | None = None
+            if in_reply_to is not None:
+                root_cm = _STATE["review_comments_by_id"].get(int(in_reply_to))
+                if root_cm is None or root_cm.get("in_reply_to_id") is not None:
+                    self._send_json(
+                        {"message": "in_reply_to must be a top-level comment"},
+                        status=422,
+                    )
+                    return
+                target_thread = _STATE["review_threads_by_id"].get(
+                    root_cm["_thread_id"]
+                )
+
+            cid = _STATE["next_comment_id"]
+            _STATE["next_comment_id"] += 1
+            node_id = f"PRRC_emu_{cid}"
+
+            if target_thread is None:
+                tid = _STATE["next_thread_id"]
+                _STATE["next_thread_id"] += 1
+                thread_id = f"PRRT_emu_{tid}"
+                target_thread = {
+                    "id": thread_id,
+                    "isResolved": False,
+                    "comments": [],
+                }
+                _STATE["review_threads_by_pr"].setdefault(pr_num, []).append(
+                    target_thread
+                )
+                _STATE["review_threads_by_id"][thread_id] = target_thread
+
+            review_comment: dict[str, Any] = {
+                "id": cid,
+                "node_id": node_id,
+                "body": payload.get("body", ""),
+                "user": {"login": "gh-repo-sync[bot]"},
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z",
+                "commit_id": payload.get("commit_id"),
+                "path": payload.get("path"),
+                "line": payload.get("line"),
+                "side": payload.get("side"),
+                "start_line": payload.get("start_line"),
+                "start_side": payload.get("start_side"),
+                "subject_type": payload.get("subject_type"),
+                "in_reply_to_id": int(in_reply_to) if in_reply_to is not None else None,
+                "_thread_id": target_thread["id"],
+            }
+            target_thread["comments"].append({"id": node_id, "databaseId": cid})
+            _STATE["review_comments_by_pr"].setdefault(pr_num, []).append(
+                review_comment
+            )
+            _STATE["review_comments_by_id"][cid] = review_comment
+            self._send_json(review_comment, status=201)
             return
 
         # POST /repos/{owner}/{repo}/issues/{number}/comments
@@ -212,6 +309,68 @@ class GitHubEmulatorHandler(http.server.BaseHTTPRequestHandler):
                                         "endCursor": None,
                                     },
                                 }
+                            }
+                        }
+                    }
+                )
+                return
+
+            if "reviewThreads" in query:
+                pr_num = int(variables.get("number") or 0)
+                threads = _STATE["review_threads_by_pr"].get(pr_num, [])
+                nodes = [
+                    {
+                        "id": t["id"],
+                        "isResolved": t["isResolved"],
+                        "comments": {"nodes": t["comments"]},
+                    }
+                    for t in threads
+                ]
+                self._send_json(
+                    {
+                        "data": {
+                            "repository": {
+                                "pullRequest": {
+                                    "reviewThreads": {
+                                        "nodes": nodes,
+                                        "pageInfo": {
+                                            "hasNextPage": False,
+                                            "endCursor": None,
+                                        },
+                                    }
+                                }
+                            }
+                        }
+                    }
+                )
+                return
+
+            if "unresolveReviewThread" in query:
+                thread_id = str(variables.get("threadId") or "")
+                thread = _STATE["review_threads_by_id"].get(thread_id)
+                if thread is not None:
+                    thread["isResolved"] = False
+                self._send_json(
+                    {
+                        "data": {
+                            "unresolveReviewThread": {
+                                "thread": {"id": thread_id, "isResolved": False}
+                            }
+                        }
+                    }
+                )
+                return
+
+            if "resolveReviewThread" in query:
+                thread_id = str(variables.get("threadId") or "")
+                thread = _STATE["review_threads_by_id"].get(thread_id)
+                if thread is not None:
+                    thread["isResolved"] = True
+                self._send_json(
+                    {
+                        "data": {
+                            "resolveReviewThread": {
+                                "thread": {"id": thread_id, "isResolved": True}
                             }
                         }
                     }
@@ -308,6 +467,19 @@ class GitHubEmulatorHandler(http.server.BaseHTTPRequestHandler):
             if "base" in payload:
                 pr["base"]["ref"] = payload["base"]
             self._send_json(pr)
+            return
+
+        # PATCH /repos/{owner}/{repo}/pulls/comments/{comment_id}
+        m_rcm = re.match(r"^/repos/[^/]+/[^/]+/pulls/comments/(\d+)$", path)
+        if m_rcm:
+            cid = int(m_rcm.group(1))
+            cm = _STATE["review_comments_by_id"].get(cid)
+            if not cm:
+                self._send_json({"message": "Not Found"}, status=404)
+                return
+            if "body" in payload:
+                cm["body"] = payload["body"]
+            self._send_json(cm)
             return
 
         # PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}

@@ -543,6 +543,12 @@ class TestGitHubPrImporter:
                 status=200,
             )
             rsps.add(
+                responses.GET,
+                "https://ghe.example.com/api/v3/repos/my-org/my-repo/pulls/10/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
                 responses.POST,
                 "https://ghe.example.com/api/v3/repos/my-org/my-repo/issues/10/comments",
                 json={"id": 1, "node_id": "IC_ghe1"},
@@ -882,6 +888,12 @@ class TestGitHubPrImporter:
                 status=200,
             )
             rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/3/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
                 responses.POST,
                 "https://api.github.com/repos/my-org/my-repo/issues/3/comments",
                 json={"id": 100, "node_id": "IC_100"},
@@ -905,7 +917,7 @@ class TestGitHubPrImporter:
                 [origin_pr], self._make_exporter(mocker, comments=comments)
             )
             assert res.synced_pr_comments == 2
-            body2 = self._json_body(rsps.calls[5])["body"]
+            body2 = self._json_body(rsps.calls[6])["body"]
             assert "`a.py` (line 12)" in body2
             assert "<!-- gh-repo-sync:origin-comment-id=2 -->" in body2
 
@@ -953,6 +965,12 @@ class TestGitHubPrImporter:
                 responses.POST,
                 "https://api.github.com/graphql",
                 json={"data": {"nodes": [{"id": "IC_500", "isMinimized": False}]}},
+                status=200,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/3/comments?per_page=100",
+                json=[],
                 status=200,
             )
             rsps.add(
@@ -1068,6 +1086,12 @@ class TestGitHubPrImporter:
                 status=200,
             )
             rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/3/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
                 responses.PATCH,
                 "https://api.github.com/repos/my-org/my-repo/issues/comments/500",
                 json={"id": 500},
@@ -1098,7 +1122,7 @@ class TestGitHubPrImporter:
                 [origin_pr], self._make_exporter(mocker, comments=comments)
             )
             assert res.synced_pr_comments == 1
-            gql_payload = self._json_body(rsps.calls[5])
+            gql_payload = self._json_body(rsps.calls[-1])
             assert "minimizeComment" in gql_payload["query"]
             assert gql_payload["variables"]["id"] == "IC_500"
 
@@ -1150,6 +1174,12 @@ class TestGitHubPrImporter:
                 status=200,
             )
             rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/3/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
                 responses.PATCH,
                 "https://api.github.com/repos/my-org/my-repo/issues/comments/500",
                 json={"id": 500},
@@ -1178,7 +1208,7 @@ class TestGitHubPrImporter:
                 [origin_pr], self._make_exporter(mocker, comments=comments)
             )
             assert res.synced_pr_comments == 1
-            gql_payload = self._json_body(rsps.calls[5])
+            gql_payload = self._json_body(rsps.calls[-1])
             assert "unminimizeComment" in gql_payload["query"]
 
     def test_given_merged_origin_pr_when_reconciling_then_syncs_final_comments_posts_note_and_closes_pr(
@@ -1208,6 +1238,12 @@ class TestGitHubPrImporter:
             rsps.add(
                 responses.GET,
                 "https://api.github.com/repos/my-org/my-repo/issues/9/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/9/comments?per_page=100",
                 json=[],
                 status=200,
             )
@@ -1243,7 +1279,7 @@ class TestGitHubPrImporter:
             res = self._make_importer().reconcile([], exporter)
             assert res.closed_prs == [9]
             assert res.synced_pr_comments == 1
-            closing_note = self._json_body(rsps.calls[4])["body"]
+            closing_note = self._json_body(rsps.calls[5])["body"]
             assert "**merged**" in closing_note
 
     def test_given_declined_or_superseded_origin_pr_when_reconciling_then_posts_note_and_closes_pr(
@@ -1460,6 +1496,12 @@ class TestGitHubPrImporter:
                 status=200,
             )
             rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/21/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
                 responses.POST,
                 "https://api.github.com/repos/my-org/my-repo/issues/21/comments",
                 json={"id": 300, "node_id": "IC_300"},
@@ -1487,7 +1529,7 @@ class TestGitHubPrImporter:
             assert "Author: @jdoe" in pr_body
             assert self._json_body(rsps.calls[3]) == {"assignees": ["jdoe"]}
             assert self._json_body(rsps.calls[4]) == {"reviewers": ["bsmith", "cwhite"]}
-            comment_body = self._json_body(rsps.calls[6])["body"]
+            comment_body = self._json_body(rsps.calls[7])["body"]
             assert comment_body.startswith("> @bsmith\n\nNice work")
 
     def test_given_unresolved_author_and_commenter_when_reconciling_then_falls_back_to_plain_text_headers_without_assignees(
@@ -1518,6 +1560,12 @@ class TestGitHubPrImporter:
                 status=200,
             )
             rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/22/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
                 responses.POST,
                 "https://api.github.com/repos/my-org/my-repo/issues/22/comments",
                 json={"id": 301, "node_id": "IC_301"},
@@ -1543,7 +1591,7 @@ class TestGitHubPrImporter:
             assert (
                 "Author: **Unknown Author**" in self._json_body(rsps.calls[2])["body"]
             )
-            assert self._json_body(rsps.calls[4])["body"].startswith(
+            assert self._json_body(rsps.calls[5])["body"].startswith(
                 "> **Unknown Commenter**\n\nNote"
             )
 
@@ -1587,6 +1635,12 @@ class TestGitHubPrImporter:
                 status=200,
             )
             rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/23/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
                 responses.POST,
                 "https://api.github.com/repos/my-org/my-repo/issues/23/comments",
                 json={"id": 302, "node_id": "IC_302"},
@@ -1624,7 +1678,7 @@ class TestGitHubPrImporter:
                 [origin_pr], self._make_exporter(mocker, comments=comments)
             )
             assert res.synced_pr_comments == 1
-            comment_body = self._json_body(rsps.calls[5])["body"]
+            comment_body = self._json_body(rsps.calls[6])["body"]
             assert comment_body.startswith(
                 "> @bsmith | ✅ Resolved by Jane Doe\n\nFixed"
             )
@@ -1974,3 +2028,1360 @@ class TestGitHubPrImporter:
             assert "Author: @jdoe" in self._json_body(rsps.calls[1])["body"]
             assert self._json_body(rsps.calls[2]) == {"assignees": ["jdoe"]}
             assert self._json_body(rsps.calls[3]) == {"reviewers": ["bsmith"]}
+
+    def test_given_single_line_right_and_left_inline_comments_when_reconciling_then_creates_review_comments_with_destination_head_sha(
+        self, mocker: MockerFixture
+    ) -> None:
+        import responses
+
+        from src.providers.base import PullRequest, PullRequestComment
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls?state=open&per_page=100",
+                json=[],
+                status=200,
+            )
+            _mock_org_members_graphql(rsps, members=[])
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/pulls",
+                json={"number": 30, "head": {"sha": "dest-sha-30"}},
+                status=201,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/issues/30/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/30/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/pulls/30/comments",
+                json={"id": 1001, "node_id": "PRRC_1001"},
+                status=201,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/pulls/30/comments",
+                json={"id": 1002, "node_id": "PRRC_1002"},
+                status=201,
+            )
+
+            origin_pr = PullRequest(
+                id="201",
+                title="Inline PR",
+                description="",
+                source_branch="feat/inline",
+                target_branch="main",
+                author="Alice",
+            )
+            comments = [
+                PullRequestComment(
+                    id="c1",
+                    body="Added line",
+                    author="Bob",
+                    file_path="README.md",
+                    line=284,
+                    side="RIGHT",
+                ),
+                PullRequestComment(
+                    id="c2",
+                    body="Deleted line",
+                    author="Bob",
+                    file_path="README.md",
+                    line=280,
+                    side="LEFT",
+                ),
+            ]
+            res = self._make_importer().reconcile(
+                [origin_pr], self._make_exporter(mocker, comments=comments)
+            )
+            assert res.errors == []
+            assert res.synced_pr_comments == 2
+            post_calls = [
+                c
+                for c in rsps.calls
+                if c.request.method == "POST"
+                and c.request.url
+                == "https://api.github.com/repos/my-org/my-repo/pulls/30/comments"
+            ]
+            assert len(post_calls) == 2
+            p1 = self._json_body(post_calls[0])
+            p2 = self._json_body(post_calls[1])
+            assert p1["commit_id"] == "dest-sha-30"
+            assert p1["path"] == "README.md"
+            assert p1["line"] == 284
+            assert p1["side"] == "RIGHT"
+            assert "on `README.md`" not in p1["body"]
+            assert p2["line"] == 280
+            assert p2["side"] == "LEFT"
+
+    def test_given_multiline_inline_comment_when_reconciling_then_creates_review_comment_with_start_line_and_start_side(
+        self, mocker: MockerFixture
+    ) -> None:
+        import responses
+
+        from src.providers.base import PullRequest, PullRequestComment
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls?state=open&per_page=100",
+                json=[],
+                status=200,
+            )
+            _mock_org_members_graphql(rsps, members=[])
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/pulls",
+                json={"number": 31, "head": {"sha": "dest-sha-31"}},
+                status=201,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/issues/31/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/31/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/pulls/31/comments",
+                json={"id": 1003, "node_id": "PRRC_1003"},
+                status=201,
+            )
+
+            origin_pr = PullRequest(
+                id="202",
+                title="Multiline PR",
+                description="",
+                source_branch="feat/multi",
+                target_branch="main",
+                author="Alice",
+            )
+            comments = [
+                PullRequestComment(
+                    id="c3",
+                    body="Refactor range",
+                    author="Bob",
+                    file_path="src/app.ts",
+                    start_line=10,
+                    start_side="RIGHT",
+                    line=15,
+                    side="RIGHT",
+                )
+            ]
+            res = self._make_importer().reconcile(
+                [origin_pr], self._make_exporter(mocker, comments=comments)
+            )
+            assert res.synced_pr_comments == 1
+            payload = self._json_body(rsps.calls[-1])
+            assert payload["start_line"] == 10
+            assert payload["start_side"] == "RIGHT"
+            assert payload["line"] == 15
+            assert payload["side"] == "RIGHT"
+
+    def test_given_file_level_inline_comment_when_reconciling_then_creates_review_comment_with_subject_type_file(
+        self, mocker: MockerFixture
+    ) -> None:
+        import responses
+
+        from src.providers.base import PullRequest, PullRequestComment
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls?state=open&per_page=100",
+                json=[],
+                status=200,
+            )
+            _mock_org_members_graphql(rsps, members=[])
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/pulls",
+                json={"number": 32, "head": {"sha": "dest-sha-32"}},
+                status=201,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/issues/32/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/32/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/pulls/32/comments",
+                json={"id": 1004, "node_id": "PRRC_1004"},
+                status=201,
+            )
+
+            origin_pr = PullRequest(
+                id="203",
+                title="File comment PR",
+                description="",
+                source_branch="feat/file",
+                target_branch="main",
+                author="Alice",
+            )
+            comments = [
+                PullRequestComment(
+                    id="c4",
+                    body="Whole file comment",
+                    author="Bob",
+                    file_path="src/app.ts",
+                    line=None,
+                )
+            ]
+            res = self._make_importer().reconcile(
+                [origin_pr], self._make_exporter(mocker, comments=comments)
+            )
+            assert res.synced_pr_comments == 1
+            payload = self._json_body(rsps.calls[-1])
+            assert payload["subject_type"] == "file"
+            assert payload["path"] == "src/app.ts"
+            assert "line" not in payload
+
+    def test_given_threaded_and_nested_replies_out_of_order_when_reconciling_then_creates_parents_first_and_attaches_replies_to_root_review_comment(
+        self, mocker: MockerFixture
+    ) -> None:
+        import responses
+
+        from src.providers.base import PullRequest, PullRequestComment
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls?state=open&per_page=100",
+                json=[],
+                status=200,
+            )
+            _mock_org_members_graphql(rsps, members=[])
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/pulls",
+                json={"number": 33, "head": {"sha": "dest-sha-33"}},
+                status=201,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/issues/33/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/33/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/pulls/33/comments",
+                json={"id": 2001, "node_id": "PRRC_2001"},
+                status=201,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/pulls/33/comments",
+                json={"id": 2002, "node_id": "PRRC_2002", "in_reply_to_id": 2001},
+                status=201,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/pulls/33/comments",
+                json={"id": 2003, "node_id": "PRRC_2003", "in_reply_to_id": 2001},
+                status=201,
+            )
+
+            origin_pr = PullRequest(
+                id="204",
+                title="Threaded PR",
+                description="",
+                source_branch="feat/thread",
+                target_branch="main",
+                author="Alice",
+            )
+            # Deliberately out of order: grandchild, child, root
+            comments = [
+                PullRequestComment(
+                    id="c_grand", body="Grandchild", author="Alice", parent_id="c_child"
+                ),
+                PullRequestComment(
+                    id="c_child", body="Child", author="Bob", parent_id="c_root"
+                ),
+                PullRequestComment(
+                    id="c_root",
+                    body="Root",
+                    author="Alice",
+                    file_path="app.py",
+                    line=5,
+                    side="RIGHT",
+                ),
+            ]
+            res = self._make_importer().reconcile(
+                [origin_pr], self._make_exporter(mocker, comments=comments)
+            )
+            assert res.synced_pr_comments == 3
+            post_calls = [
+                self._json_body(c)
+                for c in rsps.calls
+                if c.request.method == "POST"
+                and c.request.url
+                == "https://api.github.com/repos/my-org/my-repo/pulls/33/comments"
+            ]
+            assert "origin-comment-id=c_root" in post_calls[0]["body"]
+            assert post_calls[1]["in_reply_to"] == 2001
+            assert post_calls[2]["in_reply_to"] == 2001
+
+    def test_given_continuous_sync_reply_to_existing_review_comment_when_reconciling_then_attaches_via_origin_comment_id_marker(
+        self, mocker: MockerFixture
+    ) -> None:
+        import responses
+
+        from src.providers.base import PullRequest, PullRequestComment
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls?state=open&per_page=100",
+                json=[
+                    {
+                        "number": 34,
+                        "title": "Existing PR",
+                        "body": "> **Synced from origin** | Author: **Alice** | Original PR: #205\n\n<!-- gh-repo-sync:origin-pr-id=205 -->",
+                        "head": {"ref": "feat/x", "sha": "dest-sha-34"},
+                        "base": {"ref": "main"},
+                        "state": "open",
+                        "user": {"login": "bot"},
+                    }
+                ],
+                status=200,
+            )
+            _mock_org_members_graphql(rsps, members=[])
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/issues/34/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/34/comments?per_page=100",
+                json=[
+                    {
+                        "id": 55501,
+                        "node_id": "PRRC_55501",
+                        "body": "> **Alice**\n\nRoot\n\n<!-- gh-repo-sync:origin-comment-id=100 -->",
+                        "in_reply_to_id": None,
+                    }
+                ],
+                status=200,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/graphql",
+                json={
+                    "data": {
+                        "repository": {
+                            "pullRequest": {
+                                "reviewThreads": {
+                                    "nodes": [
+                                        {
+                                            "id": "PRRT_1",
+                                            "isResolved": False,
+                                            "comments": {
+                                                "nodes": [
+                                                    {
+                                                        "id": "PRRC_55501",
+                                                        "databaseId": 55501,
+                                                    }
+                                                ]
+                                            },
+                                        }
+                                    ],
+                                    "pageInfo": {
+                                        "hasNextPage": False,
+                                        "endCursor": None,
+                                    },
+                                }
+                            }
+                        }
+                    }
+                },
+                status=200,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/pulls/34/comments",
+                json={"id": 55502, "node_id": "PRRC_55502", "in_reply_to_id": 55501},
+                status=201,
+            )
+
+            origin_pr = PullRequest(
+                id="205",
+                title="Existing PR",
+                description="",
+                source_branch="feat/x",
+                target_branch="main",
+                author="Alice",
+            )
+            comments = [
+                PullRequestComment(
+                    id="100",
+                    body="Root",
+                    author="Alice",
+                    file_path="app.py",
+                    line=10,
+                    side="RIGHT",
+                ),
+                PullRequestComment(
+                    id="101", body="New reply", author="Bob", parent_id="100"
+                ),
+            ]
+            res = self._make_importer().reconcile(
+                [origin_pr], self._make_exporter(mocker, comments=comments)
+            )
+            assert res.synced_pr_comments == 1
+            payload = self._json_body(rsps.calls[-1])
+            assert payload["in_reply_to"] == 55501
+            assert "origin-comment-id=101" in payload["body"]
+
+    def test_given_continuous_sync_nested_reply_when_original_root_deleted_on_origin_then_uses_github_in_reply_to_id_as_root(
+        self, mocker: MockerFixture
+    ) -> None:
+        import responses
+
+        from src.providers.base import PullRequest, PullRequestComment
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls?state=open&per_page=100",
+                json=[
+                    {
+                        "number": 35,
+                        "title": "Existing PR",
+                        "body": "> **Synced from origin** | Author: **Alice** | Original PR: #206\n\n<!-- gh-repo-sync:origin-pr-id=206 -->",
+                        "head": {"ref": "feat/x", "sha": "dest-sha-35"},
+                        "base": {"ref": "main"},
+                        "state": "open",
+                        "user": {"login": "bot"},
+                    }
+                ],
+                status=200,
+            )
+            _mock_org_members_graphql(rsps, members=[])
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/issues/35/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/35/comments?per_page=100",
+                json=[
+                    {
+                        "id": 55502,
+                        "node_id": "PRRC_55502",
+                        "body": "> **Bob**\n\nFirst reply\n\n<!-- gh-repo-sync:origin-comment-id=101 -->",
+                        "in_reply_to_id": 55501,
+                    }
+                ],
+                status=200,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/graphql",
+                json={
+                    "data": {
+                        "repository": {
+                            "pullRequest": {
+                                "reviewThreads": {
+                                    "nodes": [],
+                                    "pageInfo": {
+                                        "hasNextPage": False,
+                                        "endCursor": None,
+                                    },
+                                }
+                            }
+                        }
+                    }
+                },
+                status=200,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/pulls/35/comments",
+                json={"id": 55503, "node_id": "PRRC_55503", "in_reply_to_id": 55501},
+                status=201,
+            )
+
+            origin_pr = PullRequest(
+                id="206",
+                title="Existing PR",
+                description="",
+                source_branch="feat/x",
+                target_branch="main",
+                author="Alice",
+            )
+            # Origin root 100 was deleted; 101 is now top surviving comment, 102 replies to 101
+            comments = [
+                PullRequestComment(
+                    id="101", body="First reply", author="Bob", parent_id=None
+                ),
+                PullRequestComment(
+                    id="102", body="Second reply", author="Alice", parent_id="101"
+                ),
+            ]
+            res = self._make_importer().reconcile(
+                [origin_pr], self._make_exporter(mocker, comments=comments)
+            )
+            assert res.synced_pr_comments == 1
+            payload = self._json_body(rsps.calls[-1])
+            assert payload["in_reply_to"] == 55501
+
+    def test_given_reply_to_general_or_fallback_issue_comment_when_reconciling_then_posts_reply_as_issue_comment(
+        self, mocker: MockerFixture
+    ) -> None:
+        import responses
+
+        from src.providers.base import PullRequest, PullRequestComment
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls?state=open&per_page=100",
+                json=[],
+                status=200,
+            )
+            _mock_org_members_graphql(rsps, members=[])
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/pulls",
+                json={"number": 36, "head": {"sha": "dest-sha-36"}},
+                status=201,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/issues/36/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/36/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/issues/36/comments",
+                json={"id": 6001, "node_id": "IC_6001"},
+                status=201,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/issues/36/comments",
+                json={"id": 6002, "node_id": "IC_6002"},
+                status=201,
+            )
+
+            origin_pr = PullRequest(
+                id="207",
+                title="General reply PR",
+                description="",
+                source_branch="feat/x",
+                target_branch="main",
+                author="Alice",
+            )
+            comments = [
+                PullRequestComment(id="g1", body="General root", author="Alice"),
+                PullRequestComment(
+                    id="g2", body="General reply", author="Bob", parent_id="g1"
+                ),
+            ]
+            res = self._make_importer().reconcile(
+                [origin_pr], self._make_exporter(mocker, comments=comments)
+            )
+            assert res.synced_pr_comments == 2
+            issue_posts = [
+                c
+                for c in rsps.calls
+                if c.request.method == "POST"
+                and c.request.url
+                == "https://api.github.com/repos/my-org/my-repo/issues/36/comments"
+            ]
+            assert len(issue_posts) == 2
+
+    def test_given_github_422_on_review_comment_creation_when_reconciling_then_falls_back_to_issue_comment_with_location_header(
+        self, mocker: MockerFixture
+    ) -> None:
+        import responses
+
+        from src.providers.base import PullRequest, PullRequestComment
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls?state=open&per_page=100",
+                json=[],
+                status=200,
+            )
+            _mock_org_members_graphql(rsps, members=[])
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/pulls",
+                json={"number": 37, "head": {"sha": "dest-sha-37"}},
+                status=201,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/issues/37/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/37/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/pulls/37/comments",
+                json={"message": "Validation Failed"},
+                status=422,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/issues/37/comments",
+                json={"id": 6010, "node_id": "IC_6010"},
+                status=201,
+            )
+
+            origin_pr = PullRequest(
+                id="208",
+                title="422 PR",
+                description="",
+                source_branch="feat/x",
+                target_branch="main",
+                author="Alice",
+            )
+            comments = [
+                PullRequestComment(
+                    id="c422",
+                    body="Outdated line",
+                    author="Bob",
+                    file_path="old.py",
+                    start_line=10,
+                    start_side="RIGHT",
+                    line=12,
+                    side="RIGHT",
+                )
+            ]
+            res = self._make_importer().reconcile(
+                [origin_pr], self._make_exporter(mocker, comments=comments)
+            )
+            assert res.errors == []
+            assert res.synced_pr_comments == 1
+            fallback_body = self._json_body(rsps.calls[-1])["body"]
+            assert "on `old.py` (lines 10-12)" in fallback_body
+
+    def test_given_empty_head_sha_when_reconciling_inline_comment_then_falls_back_to_issue_comment(
+        self, mocker: MockerFixture
+    ) -> None:
+        import responses
+
+        from src.providers.base import PullRequest, PullRequestComment
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls?state=open&per_page=100",
+                json=[],
+                status=200,
+            )
+            _mock_org_members_graphql(rsps, members=[])
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/pulls",
+                json={"number": 38},
+                status=201,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/issues/38/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/38/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/issues/38/comments",
+                json={"id": 6020, "node_id": "IC_6020"},
+                status=201,
+            )
+
+            origin_pr = PullRequest(
+                id="209",
+                title="No SHA PR",
+                description="",
+                source_branch="feat/x",
+                target_branch="main",
+                author="Alice",
+            )
+            comments = [
+                PullRequestComment(
+                    id="c_nosha",
+                    body="No sha inline",
+                    author="Bob",
+                    file_path="app.py",
+                    line=4,
+                    side="RIGHT",
+                )
+            ]
+            res = self._make_importer().reconcile(
+                [origin_pr], self._make_exporter(mocker, comments=comments)
+            )
+            assert res.synced_pr_comments == 1
+            assert (
+                rsps.calls[-1].request.url
+                == "https://api.github.com/repos/my-org/my-repo/issues/38/comments"
+            )
+
+    def test_given_edited_existing_review_comment_when_reconciling_then_updates_via_pulls_comments_patch_endpoint(
+        self, mocker: MockerFixture
+    ) -> None:
+        import responses
+
+        from src.providers.base import PullRequest, PullRequestComment
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls?state=open&per_page=100",
+                json=[
+                    {
+                        "number": 39,
+                        "title": "Edit PR",
+                        "body": "> **Synced from origin** | Author: **Alice** | Original PR: #210\n\n<!-- gh-repo-sync:origin-pr-id=210 -->",
+                        "head": {"ref": "feat/x", "sha": "dest-sha-39"},
+                        "base": {"ref": "main"},
+                        "state": "open",
+                        "user": {"login": "bot"},
+                    }
+                ],
+                status=200,
+            )
+            _mock_org_members_graphql(rsps, members=[])
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/issues/39/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/39/comments?per_page=100",
+                json=[
+                    {
+                        "id": 7001,
+                        "node_id": "PRRC_7001",
+                        "body": "> **Bob**\n\nOld text\n\n<!-- gh-repo-sync:origin-comment-id=c_edit -->",
+                    }
+                ],
+                status=200,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/graphql",
+                json={
+                    "data": {
+                        "repository": {
+                            "pullRequest": {
+                                "reviewThreads": {
+                                    "nodes": [],
+                                    "pageInfo": {
+                                        "hasNextPage": False,
+                                        "endCursor": None,
+                                    },
+                                }
+                            }
+                        }
+                    }
+                },
+                status=200,
+            )
+            rsps.add(
+                responses.PATCH,
+                "https://api.github.com/repos/my-org/my-repo/pulls/comments/7001",
+                json={"id": 7001},
+                status=200,
+            )
+
+            origin_pr = PullRequest(
+                id="210",
+                title="Edit PR",
+                description="",
+                source_branch="feat/x",
+                target_branch="main",
+                author="Alice",
+            )
+            comments = [
+                PullRequestComment(
+                    id="c_edit",
+                    body="New text",
+                    author="Bob",
+                    file_path="app.py",
+                    line=10,
+                    side="RIGHT",
+                )
+            ]
+            res = self._make_importer().reconcile(
+                [origin_pr], self._make_exporter(mocker, comments=comments)
+            )
+            assert res.synced_pr_comments == 1
+            assert rsps.calls[-1].request.method == "PATCH"
+            assert (
+                rsps.calls[-1].request.url
+                == "https://api.github.com/repos/my-org/my-repo/pulls/comments/7001"
+            )
+            assert "New text" in self._json_body(rsps.calls[-1])["body"]
+
+    def test_given_newly_created_resolved_review_comment_when_reconciling_then_fetches_review_threads_and_resolves_thread(
+        self, mocker: MockerFixture
+    ) -> None:
+        import responses
+
+        from src.providers.base import PullRequest, PullRequestComment
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls?state=open&per_page=100",
+                json=[],
+                status=200,
+            )
+            _mock_org_members_graphql(rsps, members=[])
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/pulls",
+                json={"number": 40, "head": {"sha": "dest-sha-40"}},
+                status=201,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/issues/40/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/40/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/pulls/40/comments",
+                json={"id": 8001, "node_id": "PRRC_8001"},
+                status=201,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/graphql",
+                json={
+                    "data": {
+                        "repository": {
+                            "pullRequest": {
+                                "reviewThreads": {
+                                    "nodes": [
+                                        {
+                                            "id": "PRRT_8001",
+                                            "isResolved": False,
+                                            "comments": {
+                                                "nodes": [
+                                                    {
+                                                        "id": "PRRC_8001",
+                                                        "databaseId": 8001,
+                                                    }
+                                                ]
+                                            },
+                                        }
+                                    ],
+                                    "pageInfo": {
+                                        "hasNextPage": False,
+                                        "endCursor": None,
+                                    },
+                                }
+                            }
+                        }
+                    }
+                },
+                status=200,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/graphql",
+                json={
+                    "data": {
+                        "resolveReviewThread": {
+                            "thread": {"id": "PRRT_8001", "isResolved": True}
+                        }
+                    }
+                },
+                status=200,
+            )
+
+            origin_pr = PullRequest(
+                id="211",
+                title="Resolved inline PR",
+                description="",
+                source_branch="feat/x",
+                target_branch="main",
+                author="Alice",
+            )
+            comments = [
+                PullRequestComment(
+                    id="c_res",
+                    body="Already fixed",
+                    author="Bob",
+                    file_path="app.py",
+                    line=10,
+                    side="RIGHT",
+                    is_resolved=True,
+                    resolved_by="Alice",
+                )
+            ]
+            res = self._make_importer().reconcile(
+                [origin_pr], self._make_exporter(mocker, comments=comments)
+            )
+            assert res.synced_pr_comments == 1
+            resolve_call = self._json_body(rsps.calls[-1])
+            assert "resolveReviewThread" in resolve_call["query"]
+            assert resolve_call["variables"] == {"threadId": "PRRT_8001"}
+
+    def test_given_existing_review_thread_resolved_or_unresolved_on_origin_when_reconciling_then_syncs_thread_resolution_via_graphql(
+        self, mocker: MockerFixture
+    ) -> None:
+        import responses
+
+        from src.providers.base import PullRequest, PullRequestComment
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls?state=open&per_page=100",
+                json=[
+                    {
+                        "number": 41,
+                        "title": "Toggle resolve PR",
+                        "body": "> **Synced from origin** | Author: **Alice** | Original PR: #212\n\n<!-- gh-repo-sync:origin-pr-id=212 -->",
+                        "head": {"ref": "feat/x", "sha": "dest-sha-41"},
+                        "base": {"ref": "main"},
+                        "state": "open",
+                        "user": {"login": "bot"},
+                    }
+                ],
+                status=200,
+            )
+            _mock_org_members_graphql(rsps, members=[])
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/issues/41/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/41/comments?per_page=100",
+                json=[
+                    {
+                        "id": 8101,
+                        "node_id": "PRRC_8101",
+                        "body": "> **Bob**\n\nReopened\n\n<!-- gh-repo-sync:origin-comment-id=c_unres -->",
+                    }
+                ],
+                status=200,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/graphql",
+                json={
+                    "data": {
+                        "repository": {
+                            "pullRequest": {
+                                "reviewThreads": {
+                                    "nodes": [
+                                        {
+                                            "id": "PRRT_8101",
+                                            "isResolved": True,
+                                            "comments": {
+                                                "nodes": [
+                                                    {
+                                                        "id": "PRRC_8101",
+                                                        "databaseId": 8101,
+                                                    }
+                                                ]
+                                            },
+                                        }
+                                    ],
+                                    "pageInfo": {
+                                        "hasNextPage": False,
+                                        "endCursor": None,
+                                    },
+                                }
+                            }
+                        }
+                    }
+                },
+                status=200,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/graphql",
+                json={
+                    "data": {
+                        "unresolveReviewThread": {
+                            "thread": {"id": "PRRT_8101", "isResolved": False}
+                        }
+                    }
+                },
+                status=200,
+            )
+
+            origin_pr = PullRequest(
+                id="212",
+                title="Toggle resolve PR",
+                description="",
+                source_branch="feat/x",
+                target_branch="main",
+                author="Alice",
+            )
+            comments = [
+                PullRequestComment(
+                    id="c_unres",
+                    body="Reopened",
+                    author="Bob",
+                    file_path="app.py",
+                    line=10,
+                    side="RIGHT",
+                    is_resolved=False,
+                )
+            ]
+            res = self._make_importer().reconcile(
+                [origin_pr], self._make_exporter(mocker, comments=comments)
+            )
+            assert res.synced_pr_comments == 1
+            unresolve_call = self._json_body(rsps.calls[-1])
+            assert "unresolveReviewThread" in unresolve_call["query"]
+            assert unresolve_call["variables"] == {"threadId": "PRRT_8101"}
+
+    def test_given_resolved_root_thread_with_unresolved_reply_when_reconciling_then_does_not_unresolve_thread(
+        self, mocker: MockerFixture
+    ) -> None:
+        import responses
+
+        from src.providers.base import PullRequest, PullRequestComment
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls?state=open&per_page=100",
+                json=[
+                    {
+                        "number": 42,
+                        "title": "Keep resolved PR",
+                        "body": "> **Synced from origin** | Author: **Alice** | Original PR: #213\n\n<!-- gh-repo-sync:origin-pr-id=213 -->",
+                        "head": {"ref": "feat/x", "sha": "dest-sha-42"},
+                        "base": {"ref": "main"},
+                        "state": "open",
+                        "user": {"login": "bot"},
+                    }
+                ],
+                status=200,
+            )
+            _mock_org_members_graphql(rsps, members=[])
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/issues/42/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/42/comments?per_page=100",
+                json=[
+                    {
+                        "id": 8201,
+                        "node_id": "PRRC_8201",
+                        "body": "> **Alice** | ✅ Resolved by Alice\n\nRoot\n\n<!-- gh-repo-sync:origin-comment-id=r1 -->",
+                        "in_reply_to_id": None,
+                    },
+                    {
+                        "id": 8202,
+                        "node_id": "PRRC_8202",
+                        "body": "> **Bob**\n\nReply\n\n<!-- gh-repo-sync:origin-comment-id=r2 -->",
+                        "in_reply_to_id": 8201,
+                    },
+                ],
+                status=200,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/graphql",
+                json={
+                    "data": {
+                        "repository": {
+                            "pullRequest": {
+                                "reviewThreads": {
+                                    "nodes": [
+                                        {
+                                            "id": "PRRT_8201",
+                                            "isResolved": True,
+                                            "comments": {
+                                                "nodes": [
+                                                    {
+                                                        "id": "PRRC_8201",
+                                                        "databaseId": 8201,
+                                                    },
+                                                    {
+                                                        "id": "PRRC_8202",
+                                                        "databaseId": 8202,
+                                                    },
+                                                ]
+                                            },
+                                        }
+                                    ],
+                                    "pageInfo": {
+                                        "hasNextPage": False,
+                                        "endCursor": None,
+                                    },
+                                }
+                            }
+                        }
+                    }
+                },
+                status=200,
+            )
+
+            origin_pr = PullRequest(
+                id="213",
+                title="Keep resolved PR",
+                description="",
+                source_branch="feat/x",
+                target_branch="main",
+                author="Alice",
+            )
+            comments = [
+                PullRequestComment(
+                    id="r1",
+                    body="Root",
+                    author="Alice",
+                    file_path="app.py",
+                    line=10,
+                    side="RIGHT",
+                    is_resolved=True,
+                    resolved_by="Alice",
+                ),
+                PullRequestComment(
+                    id="r2",
+                    body="Reply",
+                    author="Bob",
+                    parent_id="r1",
+                    is_resolved=False,
+                ),
+            ]
+            res = self._make_importer().reconcile(
+                [origin_pr], self._make_exporter(mocker, comments=comments)
+            )
+            assert res.synced_pr_comments == 0
+            assert not any(
+                "unresolveReviewThread" in str(c.request.body or "")
+                for c in rsps.calls
+                if c.request.url == "https://api.github.com/graphql"
+            )
+
+    def test_given_legacy_issue_comment_with_origin_marker_when_reconciling_then_updates_in_place_without_duplicating_review_comment(
+        self, mocker: MockerFixture
+    ) -> None:
+        import responses
+
+        from src.providers.base import PullRequest, PullRequestComment
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls?state=open&per_page=100",
+                json=[
+                    {
+                        "number": 43,
+                        "title": "Legacy PR",
+                        "body": "> **Synced from origin** | Author: **Alice** | Original PR: #214\n\n<!-- gh-repo-sync:origin-pr-id=214 -->",
+                        "head": {"ref": "feat/x", "sha": "dest-sha-43"},
+                        "base": {"ref": "main"},
+                        "state": "open",
+                        "user": {"login": "bot"},
+                    }
+                ],
+                status=200,
+            )
+            _mock_org_members_graphql(rsps, members=[])
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/issues/43/comments?per_page=100",
+                json=[
+                    {
+                        "id": 9001,
+                        "node_id": "IC_9001",
+                        "body": "> **Bob** | on `app.py` (line 10)\n\nOld legacy\n\n<!-- gh-repo-sync:origin-comment-id=leg1 -->",
+                    }
+                ],
+                status=200,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/graphql",
+                json={"data": {"nodes": [{"id": "IC_9001", "isMinimized": False}]}},
+                status=200,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/43/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.PATCH,
+                "https://api.github.com/repos/my-org/my-repo/issues/comments/9001",
+                json={"id": 9001},
+                status=200,
+            )
+
+            origin_pr = PullRequest(
+                id="214",
+                title="Legacy PR",
+                description="",
+                source_branch="feat/x",
+                target_branch="main",
+                author="Alice",
+            )
+            comments = [
+                PullRequestComment(
+                    id="leg1",
+                    body="Updated legacy",
+                    author="Bob",
+                    file_path="app.py",
+                    line=10,
+                    side="RIGHT",
+                )
+            ]
+            res = self._make_importer().reconcile(
+                [origin_pr], self._make_exporter(mocker, comments=comments)
+            )
+            assert res.synced_pr_comments == 1
+            assert rsps.calls[-1].request.method == "PATCH"
+            assert (
+                rsps.calls[-1].request.url
+                == "https://api.github.com/repos/my-org/my-repo/issues/comments/9001"
+            )
+            assert "on `app.py` (line 10)" in self._json_body(rsps.calls[-1])["body"]
+
+    def test_given_graphql_error_when_fetching_or_resolving_review_threads_then_logs_warning_without_failing_pr_sync(
+        self, mocker: MockerFixture
+    ) -> None:
+        import responses
+
+        from src.providers.base import PullRequest, PullRequestComment
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls?state=open&per_page=100",
+                json=[],
+                status=200,
+            )
+            _mock_org_members_graphql(rsps, members=[])
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/pulls",
+                json={"number": 44, "head": {"sha": "dest-sha-44"}},
+                status=201,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/issues/44/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.GET,
+                "https://api.github.com/repos/my-org/my-repo/pulls/44/comments?per_page=100",
+                json=[],
+                status=200,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/repos/my-org/my-repo/pulls/44/comments",
+                json={"id": 9101, "node_id": "PRRC_9101"},
+                status=201,
+            )
+            rsps.add(
+                responses.POST,
+                "https://api.github.com/graphql",
+                json={
+                    "data": {"repository": None},
+                    "errors": [{"message": "Forbidden"}],
+                },
+                status=200,
+            )
+
+            origin_pr = PullRequest(
+                id="215",
+                title="GraphQL err PR",
+                description="",
+                source_branch="feat/x",
+                target_branch="main",
+                author="Alice",
+            )
+            comments = [
+                PullRequestComment(
+                    id="c_gql_err",
+                    body="Resolved note",
+                    author="Bob",
+                    file_path="app.py",
+                    line=10,
+                    side="RIGHT",
+                    is_resolved=True,
+                )
+            ]
+            res = self._make_importer().reconcile(
+                [origin_pr], self._make_exporter(mocker, comments=comments)
+            )
+            assert res.errors == []
+            assert res.synced_pr_comments == 1
