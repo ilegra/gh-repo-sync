@@ -653,7 +653,7 @@ class TestBitbucketCloudPrExporter:
     def test_given_general_inline_and_resolved_comments_when_getting_pr_comments_then_returns_parsed_comments(
         self,
     ) -> None:
-        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100&fields=%2Bvalues.resolution.*"
         responses.add(
             responses.GET,
             url,
@@ -692,7 +692,7 @@ class TestBitbucketCloudPrExporter:
     def test_given_deleted_and_empty_comments_when_getting_pr_comments_then_skips_them(
         self,
     ) -> None:
-        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100&fields=%2Bvalues.resolution.*"
         responses.add(
             responses.GET,
             url,
@@ -713,7 +713,7 @@ class TestBitbucketCloudPrExporter:
     def test_given_paginated_pr_comments_when_getting_pr_comments_then_follows_next_links(
         self,
     ) -> None:
-        p1 = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        p1 = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100&fields=%2Bvalues.resolution.*"
         p2 = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100&page=2"
         responses.add(
             responses.GET,
@@ -802,7 +802,7 @@ class TestBitbucketCloudPrExporter:
     def test_given_inline_added_line_comment_when_getting_pr_comments_then_exports_right_side_and_line(
         self,
     ) -> None:
-        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100&fields=%2Bvalues.resolution.*"
         responses.add(
             responses.GET,
             url,
@@ -831,7 +831,7 @@ class TestBitbucketCloudPrExporter:
     def test_given_inline_deleted_line_comment_when_getting_pr_comments_then_exports_left_side_and_line(
         self,
     ) -> None:
-        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100&fields=%2Bvalues.resolution.*"
         responses.add(
             responses.GET,
             url,
@@ -860,7 +860,7 @@ class TestBitbucketCloudPrExporter:
     def test_given_inline_context_line_with_both_to_and_from_when_getting_pr_comments_then_prefers_right_side_and_to_line(
         self,
     ) -> None:
-        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100&fields=%2Bvalues.resolution.*"
         responses.add(
             responses.GET,
             url,
@@ -886,7 +886,7 @@ class TestBitbucketCloudPrExporter:
     def test_given_multiline_right_side_comment_when_getting_pr_comments_then_exports_start_line_and_start_side_right(
         self,
     ) -> None:
-        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100&fields=%2Bvalues.resolution.*"
         responses.add(
             responses.GET,
             url,
@@ -915,7 +915,7 @@ class TestBitbucketCloudPrExporter:
     def test_given_multiline_left_side_comment_when_getting_pr_comments_then_exports_start_line_and_start_side_left(
         self,
     ) -> None:
-        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100&fields=%2Bvalues.resolution.*"
         responses.add(
             responses.GET,
             url,
@@ -948,7 +948,7 @@ class TestBitbucketCloudPrExporter:
     def test_given_cross_side_multiline_comment_when_getting_pr_comments_then_exports_start_side_left_and_side_right(
         self,
     ) -> None:
-        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100&fields=%2Bvalues.resolution.*"
         responses.add(
             responses.GET,
             url,
@@ -976,7 +976,7 @@ class TestBitbucketCloudPrExporter:
     def test_given_multiline_comment_with_equal_or_inverted_bounds_when_getting_pr_comments_then_normalizes_to_single_line(
         self,
     ) -> None:
-        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100&fields=%2Bvalues.resolution.*"
         responses.add(
             responses.GET,
             url,
@@ -1009,7 +1009,7 @@ class TestBitbucketCloudPrExporter:
     def test_given_file_level_inline_comment_when_getting_pr_comments_then_exports_file_path_with_none_line_and_side(
         self,
     ) -> None:
-        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100&fields=%2Bvalues.resolution.*"
         responses.add(
             responses.GET,
             url,
@@ -1038,7 +1038,7 @@ class TestBitbucketCloudPrExporter:
     def test_given_threaded_reply_comment_when_getting_pr_comments_then_exports_parent_id(
         self,
     ) -> None:
-        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100&fields=%2Bvalues.resolution.*"
         responses.add(
             responses.GET,
             url,
@@ -1068,7 +1068,7 @@ class TestBitbucketCloudPrExporter:
     def test_given_reply_to_deleted_intermediate_comment_when_getting_pr_comments_then_reparents_to_nearest_surviving_ancestor(
         self,
     ) -> None:
-        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100&fields=%2Bvalues.resolution.*"
         responses.add(
             responses.GET,
             url,
@@ -1103,7 +1103,7 @@ class TestBitbucketCloudPrExporter:
     def test_given_reply_to_deleted_root_comment_when_getting_pr_comments_then_clears_parent_id(
         self,
     ) -> None:
-        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100&fields=%2Bvalues.resolution.*"
         responses.add(
             responses.GET,
             url,
@@ -1132,7 +1132,7 @@ class TestBitbucketCloudPrExporter:
     def test_given_malformed_inline_and_parent_payloads_when_getting_pr_comments_then_handles_gracefully_without_failing(
         self,
     ) -> None:
-        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100&fields=%2Bvalues.resolution.*"
         responses.add(
             responses.GET,
             url,
@@ -1162,3 +1162,43 @@ class TestBitbucketCloudPrExporter:
             assert cm.line is None
             assert cm.side is None
             assert cm.parent_id is None
+
+    @responses.activate
+    def test_given_resolved_comment_when_getting_pr_comments_then_requests_expanded_resolution_fields(
+        self,
+    ) -> None:
+        url = (
+            "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo"
+            "/pullrequests/10/comments?pagelen=100&fields=%2Bvalues.resolution.*"
+        )
+        responses.add(
+            responses.GET,
+            url,
+            json={
+                "values": [
+                    {
+                        "id": 911570250,
+                        "content": {"raw": "Resolved inline comment"},
+                        "user": {"display_name": "Author"},
+                        "inline": {"from": 283, "to": 283, "path": "README.md"},
+                        "resolution": {
+                            "type": "comment_resolution",
+                            "created_on": "2026-11-26T22:02:34.903731+00:00",
+                            "user": {
+                                "display_name": "Reviewer Name",
+                                "nickname": "Reviewer Name",
+                                "type": "user",
+                            },
+                        },
+                    }
+                ]
+            },
+            status=200,
+        )
+
+        comments = self._make_exporter().get_pull_request_comments("10")
+        assert len(responses.calls) == 1
+        assert "fields=%2Bvalues.resolution.*" in (responses.calls[0].request.url or "")
+        assert len(comments) == 1
+        assert comments[0].is_resolved is True
+        assert comments[0].resolved_by == "Reviewer Name"
