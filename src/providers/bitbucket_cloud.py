@@ -77,12 +77,13 @@ class BitbucketCloudPrExporter(PrExporter):
         raw_reviewers = item.get("reviewers")
         if isinstance(raw_reviewers, list):
             for reviewer_obj in raw_reviewers:
-                if isinstance(reviewer_obj, dict):
-                    reviewer_name = reviewer_obj.get(
-                        "display_name"
-                    ) or reviewer_obj.get("nickname")
-                    if isinstance(reviewer_name, str) and reviewer_name.strip():
-                        reviewers.append(reviewer_name.strip())
+                if not isinstance(reviewer_obj, dict):
+                    continue
+                reviewer_name = reviewer_obj.get("display_name") or reviewer_obj.get(
+                    "nickname"
+                )
+                if isinstance(reviewer_name, str) and reviewer_name.strip():
+                    reviewers.append(reviewer_name.strip())
 
         return PullRequest(
             id=str(item.get("id", "")),

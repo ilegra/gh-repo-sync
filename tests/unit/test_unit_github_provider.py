@@ -287,6 +287,35 @@ class TestGitHubProvider:
         assert provider.get_pr_importer() is None
 
 
+def _mock_org_members_graphql(
+    rsps: Any,
+    members: list[dict[str, Any]] | None = None,
+    graphql_url: str = "https://api.github.com/graphql",
+    has_next_page: bool = False,
+    end_cursor: str | None = None,
+) -> None:
+    import responses
+
+    rsps.add(
+        responses.POST,
+        graphql_url,
+        json={
+            "data": {
+                "organization": {
+                    "membersWithRole": {
+                        "nodes": members or [],
+                        "pageInfo": {
+                            "hasNextPage": has_next_page,
+                            "endCursor": end_cursor,
+                        },
+                    }
+                }
+            }
+        },
+        status=200,
+    )
+
+
 class TestGitHubUserResolver:
     def _make_resolver(
         self,
@@ -311,23 +340,12 @@ class TestGitHubUserResolver:
         import responses
 
         with responses.RequestsMock() as rsps:
-            rsps.add(
-                responses.POST,
-                "https://api.github.com/graphql",
-                json={
-                    "data": {
-                        "organization": {
-                            "membersWithRole": {
-                                "nodes": [
-                                    {"login": "jdoe", "name": "Jane Doe"},
-                                    {"login": "bsmith", "name": None},
-                                ],
-                                "pageInfo": {"hasNextPage": False, "endCursor": None},
-                            }
-                        }
-                    }
-                },
-                status=200,
+            _mock_org_members_graphql(
+                rsps,
+                members=[
+                    {"login": "jdoe", "name": "Jane Doe"},
+                    {"login": "bsmith", "name": None},
+                ],
             )
             resolver = self._make_resolver()
             assert resolver.resolve("  jane   DOE ") == "jdoe"
@@ -340,35 +358,15 @@ class TestGitHubUserResolver:
         import responses
 
         with responses.RequestsMock() as rsps:
-            rsps.add(
-                responses.POST,
-                "https://api.github.com/graphql",
-                json={
-                    "data": {
-                        "organization": {
-                            "membersWithRole": {
-                                "nodes": [{"login": "alice", "name": "Alice One"}],
-                                "pageInfo": {"hasNextPage": True, "endCursor": "CUR1"},
-                            }
-                        }
-                    }
-                },
-                status=200,
+            _mock_org_members_graphql(
+                rsps,
+                members=[{"login": "alice", "name": "Alice One"}],
+                has_next_page=True,
+                end_cursor="CUR1",
             )
-            rsps.add(
-                responses.POST,
-                "https://api.github.com/graphql",
-                json={
-                    "data": {
-                        "organization": {
-                            "membersWithRole": {
-                                "nodes": [{"login": "bob", "name": "Bob Two"}],
-                                "pageInfo": {"hasNextPage": False, "endCursor": None},
-                            }
-                        }
-                    }
-                },
-                status=200,
+            _mock_org_members_graphql(
+                rsps,
+                members=[{"login": "bob", "name": "Bob Two"}],
             )
             resolver = self._make_resolver()
             assert resolver.resolve("Bob Two") == "bob"
@@ -381,23 +379,12 @@ class TestGitHubUserResolver:
         import responses
 
         with responses.RequestsMock() as rsps:
-            rsps.add(
-                responses.POST,
-                "https://api.github.com/graphql",
-                json={
-                    "data": {
-                        "organization": {
-                            "membersWithRole": {
-                                "nodes": [
-                                    {"login": "jsmith1", "name": "John Smith"},
-                                    {"login": "jsmith2", "name": "john  smith"},
-                                ],
-                                "pageInfo": {"hasNextPage": False, "endCursor": None},
-                            }
-                        }
-                    }
-                },
-                status=200,
+            _mock_org_members_graphql(
+                rsps,
+                members=[
+                    {"login": "jsmith1", "name": "John Smith"},
+                    {"login": "jsmith2", "name": "john  smith"},
+                ],
             )
             resolver = self._make_resolver()
             assert resolver.resolve("John Smith") is None
@@ -494,23 +481,7 @@ class TestGitHubPrImporter:
         members: list[dict[str, Any]] | None = None,
         graphql_url: str = "https://api.github.com/graphql",
     ) -> None:
-        import responses
-
-        rsps.add(
-            responses.POST,
-            graphql_url,
-            json={
-                "data": {
-                    "organization": {
-                        "membersWithRole": {
-                            "nodes": members or [],
-                            "pageInfo": {"hasNextPage": False, "endCursor": None},
-                        }
-                    }
-                }
-            },
-            status=200,
-        )
+        _mock_org_members_graphql(rsps, members=members, graphql_url=graphql_url)
 
     def _make_importer(self, host: str = "github.com") -> Any:
         from src.providers.github import GitHubPrImporter

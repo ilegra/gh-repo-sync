@@ -80,17 +80,17 @@ class GitHubUserResolver:
 
         self._loaded = False
         self._org_name_to_login: dict[str, str] = {}
-        self._ambiguous_names: set[str] = set()
 
     @staticmethod
     def _normalize_name(name: str) -> str:
-        return " ".join(name.strip().lower().split())
+        return " ".join(name.lower().split())
 
     def _load_org_members(self) -> None:
         if self._loaded:
             return
         self._loaded = True
 
+        ambiguous_names: set[str] = set()
         cursor: str | None = None
         try:
             while True:
@@ -139,12 +139,12 @@ class GitHubUserResolver:
 
                     norm_name = self._normalize_name(name)
                     clean_login = login.strip()
-                    if norm_name in self._ambiguous_names:
+                    if norm_name in ambiguous_names:
                         continue
                     existing = self._org_name_to_login.get(norm_name)
                     if existing is not None and existing.lower() != clean_login.lower():
                         del self._org_name_to_login[norm_name]
-                        self._ambiguous_names.add(norm_name)
+                        ambiguous_names.add(norm_name)
                         logger.debug(
                             "Ambiguous GitHub org member display name; "
                             "skipping automatic resolution",
@@ -192,8 +192,6 @@ class GitHubUserResolver:
             return explicit
 
         self._load_org_members()
-        if norm in self._ambiguous_names:
-            return None
         return self._org_name_to_login.get(norm)
 
 
@@ -283,14 +281,26 @@ class GitHubPrImporter(PrImporter):
         return match.group(1) if match else None
 
     @staticmethod
+    def _format_user_mention(
+        display_name: str, resolver: GitHubUserResolver | None = None
+    ) -> str:
+        resolved = resolver.resolve(display_name) if resolver else None
+        return f"@{resolved}" if resolved else f"**{display_name}**"
+
+    @staticmethod
+    def _extract_user_logins(raw_users: Any) -> list[str]:
+        if not isinstance(raw_users, list):
+            return []
+        return [
+            str(u["login"]) for u in raw_users if isinstance(u, dict) and u.get("login")
+        ]
+
+    @classmethod
     def _format_pr_body(
-        pr: PullRequest, resolver: GitHubUserResolver | None = None
+        cls, pr: PullRequest, resolver: GitHubUserResolver | None = None
     ) -> str:
         origin_ref = f"[#{pr.id}]({pr.url})" if pr.url else f"#{pr.id}"
-        resolved_author = resolver.resolve(pr.author) if resolver else None
-        author_display = (
-            f"@{resolved_author}" if resolved_author else f"**{pr.author}**"
-        )
+        author_display = cls._format_user_mention(pr.author, resolver)
         header = (
             f"> **Synced from origin** | Author: {author_display} | "
             f"Original PR: {origin_ref}"
@@ -301,15 +311,11 @@ class GitHubPrImporter(PrImporter):
         parts.append(f"<!-- gh-repo-sync:origin-pr-id={pr.id} -->")
         return "\n\n".join(parts)
 
-    @staticmethod
+    @classmethod
     def _format_comment_body(
-        comment: PullRequestComment, resolver: GitHubUserResolver | None = None
+        cls, comment: PullRequestComment, resolver: GitHubUserResolver | None = None
     ) -> str:
-        resolved_author = resolver.resolve(comment.author) if resolver else None
-        author_display = (
-            f"@{resolved_author}" if resolved_author else f"**{comment.author}**"
-        )
-        meta = [author_display]
+        meta = [cls._format_user_mention(comment.author, resolver)]
         if comment.file_path:
             loc = (
                 f"`{comment.file_path}` (line {comment.line})"
@@ -342,16 +348,6 @@ class GitHubPrImporter(PrImporter):
             for item in items:
                 if not isinstance(item, dict):
                     continue
-                assignees = [
-                    str(u["login"])
-                    for u in (item.get("assignees") or [])
-                    if isinstance(u, dict) and u.get("login")
-                ]
-                reviewers = [
-                    str(u["login"])
-                    for u in (item.get("requested_reviewers") or [])
-                    if isinstance(u, dict) and u.get("login")
-                ]
                 prs.append(
                     PullRequest(
                         id=str(item.get("number", "")),
@@ -364,8 +360,10 @@ class GitHubPrImporter(PrImporter):
                         state=str(item.get("state") or "open").lower(),
                         is_draft=bool(item.get("draft", False)),
                         url=str(item.get("html_url") or ""),
-                        reviewers=reviewers,
-                        assignees=assignees,
+                        reviewers=self._extract_user_logins(
+                            item.get("requested_reviewers")
+                        ),
+                        assignees=self._extract_user_logins(item.get("assignees")),
                     )
                 )
             url = self._next_link(response.headers)
@@ -532,14 +530,13 @@ class GitHubPrImporter(PrImporter):
             if self._add_assignees(pr_number, [author_login]):
                 changed = True
 
-        desired_reviewers: list[str] = []
-        desired_lower: set[str] = set()
+        desired_by_lower: dict[str, str] = {}
         for reviewer_name in origin_pr.reviewers:
             login = resolver.resolve(reviewer_name)
-            if login and login.lower() not in desired_lower:
-                desired_lower.add(login.lower())
-                desired_reviewers.append(login)
+            if login:
+                desired_by_lower.setdefault(login.lower(), login)
 
+        desired_reviewers = list(desired_by_lower.values())
         if existing_gh_pr is None:
             if desired_reviewers and self._request_reviewers(
                 pr_number, desired_reviewers
@@ -551,9 +548,11 @@ class GitHubPrImporter(PrImporter):
         existing_requested_lower = {r.lower() for r in existing_requested}
 
         to_add = [
-            r for r in desired_reviewers if r.lower() not in existing_requested_lower
+            login
+            for login_lower, login in desired_by_lower.items()
+            if login_lower not in existing_requested_lower
         ]
-        to_remove = [r for r in existing_requested if r.lower() not in desired_lower]
+        to_remove = [r for r in existing_requested if r.lower() not in desired_by_lower]
 
         if to_add:
             already_reviewed = self._list_pr_review_authors(pr_number)

@@ -69,7 +69,7 @@ class SyncConfig(BaseSettings):
             except json.JSONDecodeError as exc:
                 raise ValueError(f"Invalid JSON in PR_USER_MAPPING: {exc}") from exc
             if not isinstance(parsed, dict) or not all(
-                isinstance(k, str) and isinstance(val, str) for k, val in parsed.items()
+                isinstance(val, str) for val in parsed.values()
             ):
                 raise ValueError(
                     "PR_USER_MAPPING JSON must be an object mapping strings to strings"
@@ -227,22 +227,20 @@ class SyncConfig(BaseSettings):
         if not raw:
             return {}
 
-        mapping: dict[str, str] = {}
+        pairs: list[tuple[str, str]] = []
         if raw.startswith("{"):
             parsed = json.loads(raw)
             if isinstance(parsed, dict):
-                for origin_name, gh_login in parsed.items():
-                    key = str(origin_name).strip()
-                    val = str(gh_login).strip().lstrip("@")
-                    if key and val:
-                        mapping[key] = val
-            return mapping
+                pairs = [(str(k), str(v)) for k, v in parsed.items()]
+        else:
+            for pair in raw.split(","):
+                pair = pair.strip()
+                if ":" in pair:
+                    origin_name, gh_login = pair.split(":", 1)
+                    pairs.append((origin_name, gh_login))
 
-        for pair in raw.split(","):
-            pair = pair.strip()
-            if not pair or ":" not in pair:
-                continue
-            origin_name, gh_login = pair.split(":", 1)
+        mapping: dict[str, str] = {}
+        for origin_name, gh_login in pairs:
             key = origin_name.strip()
             val = gh_login.strip().lstrip("@")
             if key and val:

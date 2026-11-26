@@ -200,39 +200,22 @@ class GitHubEmulatorHandler(http.server.BaseHTTPRequestHandler):
 
             if "membersWithRole" in query:
                 org = str(variables.get("org") or "")
-                members = _STATE["org_members"].get(org)
-                if members is None:
-                    self._send_json(
-                        {
-                            "data": {
-                                "organization": {
-                                    "membersWithRole": {
-                                        "nodes": [],
-                                        "pageInfo": {
-                                            "hasNextPage": False,
-                                            "endCursor": None,
-                                        },
-                                    }
+                members = _STATE["org_members"].get(org) or []
+                self._send_json(
+                    {
+                        "data": {
+                            "organization": {
+                                "membersWithRole": {
+                                    "nodes": members,
+                                    "pageInfo": {
+                                        "hasNextPage": False,
+                                        "endCursor": None,
+                                    },
                                 }
                             }
                         }
-                    )
-                else:
-                    self._send_json(
-                        {
-                            "data": {
-                                "organization": {
-                                    "membersWithRole": {
-                                        "nodes": members,
-                                        "pageInfo": {
-                                            "hasNextPage": False,
-                                            "endCursor": None,
-                                        },
-                                    }
-                                }
-                            }
-                        }
-                    )
+                    }
+                )
                 return
 
             if "minimizeComment" in query:
