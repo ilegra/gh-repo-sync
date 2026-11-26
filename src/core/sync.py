@@ -523,6 +523,7 @@ class SyncManager:
             pr_exporter=exporter,
             branch_mapping=self.config.branch_mapping,
             available_branches=available_branches,
+            user_mapping=self.config.pr_user_mapping,
         )
 
     def _prune_deleted_origin_branches(

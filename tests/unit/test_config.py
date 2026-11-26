@@ -140,3 +140,61 @@ def test_config_bitbucket_aliases_and_default_exclusions(
     assert config.origin_username == "bb-user"
     assert config.origin_provider == "bitbucket"
     assert "bitbucket-pipelines.yml" in config.origin_exclusive_paths
+
+
+class TestPrUserMappingConfig:
+    @staticmethod
+    def _make_config(pr_user_mapping: str | None = None) -> SyncConfig:
+        if pr_user_mapping is None:
+            return SyncConfig(
+                ORIGIN_URL="https://bitbucket.org/workspace/repo",
+                ORIGIN_TOKEN="bb-secret",
+                DESTINATION_URL="https://github.com/org/repo.git",
+                DESTINATION_TOKEN="gh-secret",
+            )
+        return SyncConfig(
+            ORIGIN_URL="https://bitbucket.org/workspace/repo",
+            ORIGIN_TOKEN="bb-secret",
+            DESTINATION_URL="https://github.com/org/repo.git",
+            DESTINATION_TOKEN="gh-secret",
+            PR_USER_MAPPING=pr_user_mapping,
+        )
+
+    def test_given_empty_pr_user_mapping_when_reading_property_then_returns_empty_dict(
+        self,
+    ) -> None:
+        config = self._make_config()
+        assert config.pr_user_mapping == {}
+
+    def test_given_json_pr_user_mapping_when_reading_property_then_parses_names_with_commas_and_strips_at_prefix(
+        self,
+    ) -> None:
+        config = self._make_config('{"Doe, Jane": "@jdoe", "Bob Smith": "bsmith"}')
+        assert config.pr_user_mapping == {"Doe, Jane": "jdoe", "Bob Smith": "bsmith"}
+
+    def test_given_comma_separated_pr_user_mapping_when_reading_property_then_parses_pairs_and_strips_whitespace(
+        self,
+    ) -> None:
+        config = self._make_config(
+            " Jane Doe : @jdoe , Bob Smith : bsmith , invalid_entry "
+        )
+        assert config.pr_user_mapping == {"Jane Doe": "jdoe", "Bob Smith": "bsmith"}
+
+    def test_given_malformed_json_pr_user_mapping_when_initializing_config_then_raises_validation_error(
+        self,
+    ) -> None:
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="Invalid JSON in PR_USER_MAPPING"):
+            self._make_config('{"Jane Doe": }')
+
+    def test_given_non_object_json_pr_user_mapping_when_initializing_config_then_raises_validation_error(
+        self,
+    ) -> None:
+        from pydantic import ValidationError
+
+        with pytest.raises(
+            ValidationError,
+            match="PR_USER_MAPPING JSON must be an object mapping strings to strings",
+        ):
+            self._make_config('{"Jane Doe": 123}')

@@ -73,6 +73,18 @@ class BitbucketCloudPrExporter(PrExporter):
         )
         html_url = ((item.get("links") or {}).get("html") or {}).get("href") or ""
 
+        reviewers: list[str] = []
+        raw_reviewers = item.get("reviewers")
+        if isinstance(raw_reviewers, list):
+            for reviewer_obj in raw_reviewers:
+                if not isinstance(reviewer_obj, dict):
+                    continue
+                reviewer_name = reviewer_obj.get("display_name") or reviewer_obj.get(
+                    "nickname"
+                )
+                if isinstance(reviewer_name, str) and reviewer_name.strip():
+                    reviewers.append(reviewer_name.strip())
+
         return PullRequest(
             id=str(item.get("id", "")),
             title=str(item.get("title") or ""),
@@ -84,6 +96,7 @@ class BitbucketCloudPrExporter(PrExporter):
             is_draft=bool(item.get("draft", False)),
             is_from_fork=is_from_fork,
             url=str(html_url),
+            reviewers=reviewers,
         )
 
     def _parse_comment(self, item: dict[str, Any]) -> PullRequestComment | None:
@@ -126,7 +139,10 @@ class BitbucketCloudPrExporter(PrExporter):
 
     def get_open_pull_requests(self) -> list[PullRequest]:
         """Returns all currently open pull requests from Bitbucket Cloud."""
-        url: str | None = f"{self._base_api_url()}/pullrequests?state=OPEN&pagelen=50"
+        url: str | None = (
+            f"{self._base_api_url()}/pullrequests"
+            "?state=OPEN&pagelen=50&fields=%2Bvalues.reviewers"
+        )
         pull_requests: list[PullRequest] = []
 
         try:

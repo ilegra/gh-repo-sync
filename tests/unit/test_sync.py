@@ -671,3 +671,40 @@ class TestSyncManager:
         assert result.closed_prs == [3]
         assert result.synced_pr_comments == 4
         assert "PR error" in result.errors
+
+    def test_given_pr_user_mapping_configured_when_syncing_prs_then_forwards_user_mapping_to_importer_reconcile(
+        self,
+    ) -> None:
+        from typing import cast
+
+        from src.providers.base import PrSyncResult
+
+        manager, _ = _create_mock_sync_manager(
+            origin_branches=[
+                Branch(name="main", remote_ref="origin/main", is_default=True)
+            ],
+            dest_branches=[
+                Branch(name="main", remote_ref="dest/main", is_default=True)
+            ],
+            merge_base_true_for=[("origin/main", "dest/main")],
+        )
+        manager.config.sync_pull_requests = True
+        manager.config.pr_user_mapping_raw = '{"Jane Doe": "jdoe"}'
+        mock_exporter = MagicMock()
+        mock_exporter.get_open_pull_requests.return_value = []
+        mock_importer = MagicMock()
+        mock_importer.reconcile.return_value = PrSyncResult()
+        cast(
+            MagicMock, manager.origin_provider.get_pr_exporter
+        ).return_value = mock_exporter
+        cast(
+            MagicMock, manager.destination_provider.get_pr_importer
+        ).return_value = mock_importer
+
+        with patch("src.core.sync.Git") as MockGit:
+            MockGit.return_value = MagicMock()
+            manager.execute()
+
+        mock_importer.reconcile.assert_called_once()
+        call_kwargs = mock_importer.reconcile.call_args.kwargs
+        assert call_kwargs["user_mapping"] == {"Jane Doe": "jdoe"}
