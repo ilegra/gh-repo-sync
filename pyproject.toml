@@ -62,7 +62,7 @@ fixable = ["ALL"]
 unfixable = []
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["D"]
+"tests/**/*.py" = ["D", "E501"]
 
 [tool.mypy]
 plugins = ["pydantic.mypy"]

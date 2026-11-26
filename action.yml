@@ -54,6 +54,10 @@ inputs:
     description: 'Legacy alias for committer-email'
     required: false
     default: ''
+  sync-pull-requests:
+    description: 'Opt-in synchronization of open pull requests and comments from origin to GitHub'
+    required: false
+    default: 'false'
 
 outputs:
   sync-result:
@@ -76,3 +80,4 @@ runs:
     COMMITTER_EMAIL: ${{ inputs.committer-email }}
     BOT_NAME: ${{ inputs.bot-name }}
     BOT_EMAIL: ${{ inputs.bot-email }}
+    SYNC_PULL_REQUESTS: ${{ inputs.sync-pull-requests }}

@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 import responses
 from pytest_mock import MockerFixture
@@ -420,3 +422,314 @@ def test_bitbucket_get_branches_defines_default_branch_fallback_to_first_branch(
     assert branches[0].is_default is True
     assert branches[1].name == "feature/foo"
     assert branches[1].is_default is False
+
+
+class TestBitbucketCloudProvider:
+    def test_given_valid_bitbucket_url_when_getting_pr_exporter_then_returns_bitbucket_pr_exporter(
+        self,
+    ) -> None:
+        from src.providers.bitbucket_cloud import BitbucketCloudPrExporter
+
+        provider = BitbucketCloudProvider(
+            repo_url="https://bitbucket.org/my-workspace/my-repo",
+            token="bb-token",
+        )
+        exporter = provider.get_pr_exporter()
+        assert isinstance(exporter, BitbucketCloudPrExporter)
+        assert provider.get_pr_exporter() is exporter
+
+    def test_given_unparseable_bitbucket_url_when_getting_pr_exporter_then_returns_none(
+        self,
+    ) -> None:
+        provider = BitbucketCloudProvider(
+            repo_url="https://example.com/not-bitbucket",
+            token="bb-token",
+        )
+        assert provider.get_pr_exporter() is None
+
+
+class TestBitbucketCloudPrExporter:
+    def _make_exporter(self) -> Any:
+        provider = BitbucketCloudProvider(
+            repo_url="https://bitbucket.org/my-workspace/my-repo",
+            token="bb-token",
+        )
+        exporter = provider.get_pr_exporter()
+        assert exporter is not None
+        return exporter
+
+    @responses.activate
+    def test_given_open_prs_single_page_when_getting_open_pull_requests_then_returns_parsed_prs(
+        self,
+    ) -> None:
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests?state=OPEN&pagelen=50"
+        responses.add(
+            responses.GET,
+            url,
+            json={
+                "values": [
+                    {
+                        "id": 42,
+                        "title": "feat: add sync",
+                        "description": "Adds PR sync",
+                        "state": "OPEN",
+                        "draft": True,
+                        "author": {"display_name": "Alice"},
+                        "source": {
+                            "branch": {"name": "feat/sync"},
+                            "repository": {"full_name": "my-workspace/my-repo"},
+                        },
+                        "destination": {
+                            "branch": {"name": "main"},
+                            "repository": {"full_name": "my-workspace/my-repo"},
+                        },
+                        "links": {
+                            "html": {
+                                "href": "https://bitbucket.org/my-workspace/my-repo/pull-requests/42"
+                            }
+                        },
+                    }
+                ]
+            },
+            status=200,
+        )
+
+        prs = self._make_exporter().get_open_pull_requests()
+        assert len(prs) == 1
+        assert prs[0].id == "42"
+        assert prs[0].title == "feat: add sync"
+        assert prs[0].description == "Adds PR sync"
+        assert prs[0].source_branch == "feat/sync"
+        assert prs[0].target_branch == "main"
+        assert prs[0].author == "Alice"
+        assert prs[0].is_draft is True
+        assert prs[0].is_from_fork is False
+        assert prs[0].state == "open"
+        assert (
+            prs[0].url == "https://bitbucket.org/my-workspace/my-repo/pull-requests/42"
+        )
+
+    @responses.activate
+    def test_given_paginated_open_prs_when_getting_open_pull_requests_then_follows_next_links(
+        self,
+    ) -> None:
+        page1 = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests?state=OPEN&pagelen=50"
+        page2 = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests?state=OPEN&pagelen=50&page=2"
+        responses.add(
+            responses.GET,
+            page1,
+            json={
+                "values": [
+                    {
+                        "id": 1,
+                        "title": "PR 1",
+                        "source": {"branch": {"name": "b1"}},
+                        "destination": {"branch": {"name": "main"}},
+                    }
+                ],
+                "next": page2,
+            },
+            status=200,
+        )
+        responses.add(
+            responses.GET,
+            page2,
+            json={
+                "values": [
+                    {
+                        "id": 2,
+                        "title": "PR 2",
+                        "source": {"branch": {"name": "b2"}},
+                        "destination": {"branch": {"name": "main"}},
+                    }
+                ]
+            },
+            status=200,
+        )
+
+        prs = self._make_exporter().get_open_pull_requests()
+        assert [p.id for p in prs] == ["1", "2"]
+
+    @responses.activate
+    def test_given_fork_pr_when_getting_open_pull_requests_then_marks_is_from_fork_true(
+        self,
+    ) -> None:
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests?state=OPEN&pagelen=50"
+        responses.add(
+            responses.GET,
+            url,
+            json={
+                "values": [
+                    {
+                        "id": 7,
+                        "title": "Fork PR",
+                        "source": {
+                            "branch": {"name": "fork-branch"},
+                            "repository": {"full_name": "other-user/my-repo"},
+                        },
+                        "destination": {
+                            "branch": {"name": "main"},
+                            "repository": {"full_name": "my-workspace/my-repo"},
+                        },
+                    }
+                ]
+            },
+            status=200,
+        )
+
+        prs = self._make_exporter().get_open_pull_requests()
+        assert len(prs) == 1
+        assert prs[0].is_from_fork is True
+
+    @responses.activate
+    def test_given_pr_with_missing_optional_fields_when_getting_open_pull_requests_then_uses_safe_defaults(
+        self,
+    ) -> None:
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests?state=OPEN&pagelen=50"
+        responses.add(
+            responses.GET,
+            url,
+            json={"values": [{"id": 9}]},
+            status=200,
+        )
+
+        prs = self._make_exporter().get_open_pull_requests()
+        assert len(prs) == 1
+        assert prs[0].id == "9"
+        assert prs[0].title == ""
+        assert prs[0].description == ""
+        assert prs[0].author == "Unknown"
+        assert prs[0].is_draft is False
+        assert prs[0].is_from_fork is False
+
+    @responses.activate
+    def test_given_forbidden_api_response_when_getting_open_pull_requests_then_returns_empty_list(
+        self,
+    ) -> None:
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests?state=OPEN&pagelen=50"
+        responses.add(responses.GET, url, status=403)
+        assert self._make_exporter().get_open_pull_requests() == []
+
+    @responses.activate
+    def test_given_network_error_when_getting_open_pull_requests_then_returns_empty_list(
+        self,
+    ) -> None:
+        import requests
+
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests?state=OPEN&pagelen=50"
+        responses.add(responses.GET, url, body=requests.ConnectionError("timeout"))
+        assert self._make_exporter().get_open_pull_requests() == []
+
+    @responses.activate
+    def test_given_completed_pr_when_getting_pull_request_then_returns_normalized_state(
+        self,
+    ) -> None:
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/15"
+        responses.add(
+            responses.GET,
+            url,
+            json={
+                "id": 15,
+                "title": "Done PR",
+                "state": "MERGED",
+                "source": {"branch": {"name": "feat/a"}},
+                "destination": {"branch": {"name": "main"}},
+            },
+            status=200,
+        )
+        pr = self._make_exporter().get_pull_request("15")
+        assert pr is not None
+        assert pr.state == "merged"
+
+    @responses.activate
+    def test_given_missing_pr_404_when_getting_pull_request_then_returns_none(
+        self,
+    ) -> None:
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/999"
+        responses.add(responses.GET, url, status=404)
+        assert self._make_exporter().get_pull_request("999") is None
+
+    @responses.activate
+    def test_given_general_inline_and_resolved_comments_when_getting_pr_comments_then_returns_parsed_comments(
+        self,
+    ) -> None:
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        responses.add(
+            responses.GET,
+            url,
+            json={
+                "values": [
+                    {
+                        "id": 101,
+                        "content": {"raw": "General comment"},
+                        "user": {"display_name": "Bob"},
+                        "created_on": "2026-01-01T00:00:00Z",
+                    },
+                    {
+                        "id": 102,
+                        "content": {"raw": "Fix this line"},
+                        "user": {"display_name": "Carol"},
+                        "inline": {"path": "src/app.py", "to": 25},
+                        "resolution": {"user": {"display_name": "Alice"}},
+                    },
+                ]
+            },
+            status=200,
+        )
+
+        comments = self._make_exporter().get_pull_request_comments("10")
+        assert len(comments) == 2
+        assert comments[0].id == "101"
+        assert comments[0].file_path is None
+        assert comments[0].is_resolved is False
+        assert comments[1].id == "102"
+        assert comments[1].file_path == "src/app.py"
+        assert comments[1].line == 25
+        assert comments[1].is_resolved is True
+        assert comments[1].resolved_by == "Alice"
+
+    @responses.activate
+    def test_given_deleted_and_empty_comments_when_getting_pr_comments_then_skips_them(
+        self,
+    ) -> None:
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        responses.add(
+            responses.GET,
+            url,
+            json={
+                "values": [
+                    {"id": 1, "deleted": True, "content": {"raw": "gone"}},
+                    {"id": 2, "deleted": False, "content": {"raw": "   "}},
+                    {"id": 3, "deleted": False, "content": {"raw": "valid"}},
+                ]
+            },
+            status=200,
+        )
+
+        comments = self._make_exporter().get_pull_request_comments("10")
+        assert [c.id for c in comments] == ["3"]
+
+    @responses.activate
+    def test_given_paginated_pr_comments_when_getting_pr_comments_then_follows_next_links(
+        self,
+    ) -> None:
+        p1 = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        p2 = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100&page=2"
+        responses.add(
+            responses.GET,
+            p1,
+            json={
+                "values": [{"id": 1, "content": {"raw": "c1"}}],
+                "next": p2,
+            },
+            status=200,
+        )
+        responses.add(
+            responses.GET,
+            p2,
+            json={"values": [{"id": 2, "content": {"raw": "c2"}}]},
+            status=200,
+        )
+
+        comments = self._make_exporter().get_pull_request_comments("10")
+        assert [c.id for c in comments] == ["1", "2"]

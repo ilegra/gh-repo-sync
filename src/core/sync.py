@@ -11,6 +11,7 @@ from src.providers.base import (
     Branch,
     DestinationProvider,
     OriginProvider,
+    PrSyncResult,
 )
 from src.providers.base import (
     validate_branch_name as validate_branch_name,
@@ -500,6 +501,30 @@ class SyncManager:
 
         return evaluated_branches, updated_branches, sync_errors
 
+    def _sync_pull_requests(self, available_branches: set[str]) -> PrSyncResult:
+        if not self.config.sync_pull_requests:
+            return PrSyncResult()
+
+        exporter = self.origin_provider.get_pr_exporter()
+        importer = self.destination_provider.get_pr_importer()
+
+        if exporter is None or importer is None:
+            logger.warning(
+                "Pull request sync is enabled but not supported by providers",
+                has_exporter=exporter is not None,
+                has_importer=importer is not None,
+            )
+            return PrSyncResult()
+
+        logger.info("Syncing pull requests from Origin to Destination")
+        origin_prs = exporter.get_open_pull_requests()
+        return importer.reconcile(
+            origin_prs=origin_prs,
+            pr_exporter=exporter,
+            branch_mapping=self.config.branch_mapping,
+            available_branches=available_branches,
+        )
+
     def _prune_deleted_origin_branches(
         self, destination_branches: list[Branch], default_branch: str
     ) -> tuple[list[str], list[str]]:
@@ -580,6 +605,11 @@ class SyncManager:
             origin_branches=origin_branches, default_branch=default_branch
         )
 
+        available_branches = {b.name for b in destination_branches} | set(
+            evaluated_branches
+        )
+        pr_sync_result = self._sync_pull_requests(available_branches)
+
         removed_branches, prune_errors = self._prune_deleted_origin_branches(
             destination_branches=destination_branches,
             default_branch=default_branch,
@@ -587,7 +617,7 @@ class SyncManager:
 
         synced_tags, tag_errors = self._sync_tags()
 
-        all_errors = branch_errors + prune_errors + tag_errors
+        all_errors = branch_errors + pr_sync_result.errors + prune_errors + tag_errors
 
         return SyncResult(
             repo_name=self.destination_provider.get_repo_name(),
@@ -597,5 +627,9 @@ class SyncManager:
             updated_branches=updated_branches,
             removed_branches=removed_branches,
             synced_tags=synced_tags,
+            created_prs=pr_sync_result.created_prs,
+            updated_prs=pr_sync_result.updated_prs,
+            closed_prs=pr_sync_result.closed_prs,
+            synced_pr_comments=pr_sync_result.synced_pr_comments,
             errors=all_errors,
         )

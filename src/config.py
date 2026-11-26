@@ -32,6 +32,7 @@ class SyncConfig(BaseSettings):
         validation_alias="BOT_EMAIL",
     )
     sync_json_file: str = Field("sync.json", validation_alias="SYNC_JSON_FILE")
+    sync_pull_requests: bool = Field(False, validation_alias="SYNC_PULL_REQUESTS")
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -94,6 +95,7 @@ class SyncConfig(BaseSettings):
                 "DEFAULT_BOT_EMAIL",
             ],
             "sync_json_file": ["SYNC_JSON_FILE"],
+            "sync_pull_requests": ["SYNC_PULL_REQUESTS"],
         }
         res = dict(data) if isinstance(data, dict) else {}
         for field, alt_keys in aliases.items():
@@ -201,6 +203,10 @@ class SyncResult(BaseModel):
     updated_branches: list[str] = Field(default_factory=list)
     removed_branches: list[str] = Field(default_factory=list)
     synced_tags: list[str] = Field(default_factory=list)
+    created_prs: list[int] = Field(default_factory=list)
+    updated_prs: list[int] = Field(default_factory=list)
+    closed_prs: list[int] = Field(default_factory=list)
+    synced_pr_comments: int = 0
     already_disabled: bool = False
     errors: list[str] = Field(default_factory=list)
 

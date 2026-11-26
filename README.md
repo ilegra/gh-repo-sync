@@ -114,7 +114,22 @@ jobs:
           origin-token: ${{ secrets.BITBUCKET_TOKEN }}
           destination-url: 'https://github.com/org/repo.git'
           destination-token: ${{ secrets.GH_TOKEN }}
+          sync-pull-requests: 'true' # Optional: sync open PRs and comments
 ```
+
+#### Pull Request & Comments Synchronization (Opt-In)
+
+When `sync-pull-requests: 'true'` (or `SYNC_PULL_REQUESTS=true`) is enabled with a **Bitbucket Cloud** origin and **GitHub** destination, `gh-repo-sync` reconciles open pull requests and their comments on every run:
+
+- **Required Permissions**:
+  - **Bitbucket Cloud**: `Pull requests: Read` (in addition to `Repositories: Read`).
+  - **GitHub**: `pull-requests: write` (in addition to `contents: write`).
+- **Lifecycle Reconciliation**:
+  - Creates GitHub PRs for open Bitbucket Cloud PRs (preserving title, description, draft status, and branch mappings) with an attribution header and hidden tracking marker (`<!-- gh-repo-sync:origin-pr-id=... -->`).
+  - Updates existing tracked GitHub PRs when title, description, or target branch changes.
+  - Syncs general and inline comments (creating new comments, updating edited ones, and minimizing/unminimizing resolved comments natively via GitHub GraphQL).
+  - Automatically syncs final comments, posts a closing status note (`merged`, `declined`, or `superseded`), and closes tracked GitHub PRs when completed on Bitbucket Cloud (before branch pruning).
+  - Native GitHub PRs without a tracking marker are never modified.
 
 ### Action Inputs
 
@@ -133,6 +148,7 @@ jobs:
 | `committer-email` | No | `github-actions[bot]@users.noreply.github.com` | Committer email fallback when origin author cannot be resolved. |
 | `bot-name` | No | `""` | Legacy alias for `committer-name`. |
 | `bot-email` | No | `""` | Legacy alias for `committer-email`. |
+| `sync-pull-requests` | No | `'false'` | Opt-in synchronization of open pull requests and comments from Bitbucket Cloud to GitHub. |
 
 ### Action Outputs
 
@@ -152,6 +168,10 @@ A single-line JSON string containing the complete synchronization report.
 | `updated_branches` | `array[string]` | List of branch names that actually received new commits and were updated on destination. |
 | `removed_branches` | `array[string]` | List of pruned branches that no longer exist in origin. |
 | `synced_tags` | `array[string]` | List of tag names synchronized to the destination. |
+| `created_prs` | `array[integer]` | List of newly created GitHub pull request numbers. |
+| `updated_prs` | `array[integer]` | List of existing tracked GitHub pull request numbers updated during sync. |
+| `closed_prs` | `array[integer]` | List of tracked GitHub pull request numbers closed after origin completion. |
+| `synced_pr_comments` | `integer` | Count of PR comments created, updated, or whose resolved state changed. |
 | `already_disabled` | `boolean` | Flag indicating whether origin repo is disabled (sync bypassed). |
 | `errors` | `array[string]` | List of non-fatal and fatal errors collected during execution. |
 
@@ -333,6 +353,7 @@ For standalone or local container execution, the following environment variables
 | `BRANCH_MAPPING` | Branch mapping `origin:dest` (e.g., `master:main`). |
 | `COMMITTER_NAME` | Git bot author/committer name fallback (default: `github-actions[bot]`). |
 | `COMMITTER_EMAIL` | Git bot author/committer email fallback (default: `github-actions[bot]@users.noreply.github.com`). |
+| `SYNC_PULL_REQUESTS` | Opt-in flag (`true`/`false`, default: `false`) to synchronize open pull requests and comments from Bitbucket Cloud to GitHub. |
 
 ## Development and Testing
 
