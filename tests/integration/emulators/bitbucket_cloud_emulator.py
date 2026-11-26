@@ -116,6 +116,10 @@ class BitbucketCloudEmulatorHandler(http.server.BaseHTTPRequestHandler):
             _STATE["next_pr_id"] = max(_STATE["next_pr_id"] + 1, int(pr_id) + 1)
             ws = payload.get("workspace", "test-ws")
             repo = payload.get("repo", "test-repo")
+            reviewers = [
+                {"display_name": r} if isinstance(r, str) else r
+                for r in (payload.get("reviewers") or [])
+            ]
             pr = {
                 "id": int(pr_id),
                 "title": payload.get("title", "Seeded PR"),
@@ -123,6 +127,7 @@ class BitbucketCloudEmulatorHandler(http.server.BaseHTTPRequestHandler):
                 "state": payload.get("state", "OPEN"),
                 "draft": bool(payload.get("draft", False)),
                 "author": {"display_name": payload.get("author", "Alice")},
+                "reviewers": reviewers,
                 "source": {
                     "branch": {"name": payload.get("source_branch", "feat/pr")},
                     "repository": {"full_name": f"{ws}/{repo}"},
@@ -205,6 +210,11 @@ class BitbucketCloudEmulatorHandler(http.server.BaseHTTPRequestHandler):
                 pr["title"] = payload["title"]
             if "description" in payload:
                 pr["description"] = payload["description"]
+            if "reviewers" in payload:
+                pr["reviewers"] = [
+                    {"display_name": r} if isinstance(r, str) else r
+                    for r in (payload.get("reviewers") or [])
+                ]
             self._send_json(pr)
             return
 

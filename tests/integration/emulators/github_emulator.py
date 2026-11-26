@@ -16,6 +16,8 @@ _STATE: dict[str, Any] = {
     "comments_by_pr": {},
     "comments_by_id": {},
     "comments_by_node_id": {},
+    "org_members": {},
+    "reviews_by_pr": {},
 }
 
 
@@ -26,6 +28,8 @@ def _reset_state() -> None:
     _STATE["comments_by_pr"] = {}
     _STATE["comments_by_id"] = {}
     _STATE["comments_by_node_id"] = {}
+    _STATE["org_members"] = {}
+    _STATE["reviews_by_pr"] = {}
 
 
 class GitHubEmulatorHandler(http.server.BaseHTTPRequestHandler):
@@ -77,6 +81,13 @@ class GitHubEmulatorHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(pr)
             return
 
+        # GET /repos/{owner}/{repo}/pulls/{number}/reviews
+        m_rev = re.match(r"^/repos/[^/]+/[^/]+/pulls/(\d+)/reviews$", path)
+        if m_rev:
+            pr_num = int(m_rev.group(1))
+            self._send_json(_STATE["reviews_by_pr"].get(pr_num, []))
+            return
+
         # GET /repos/{owner}/{repo}/issues/{number}/comments
         m_cm = re.match(r"^/repos/[^/]+/[^/]+/issues/(\d+)/comments$", path)
         if m_cm:
@@ -97,6 +108,13 @@ class GitHubEmulatorHandler(http.server.BaseHTTPRequestHandler):
             self._send_json({"status": "reset"})
             return
 
+        if path == "/_seed/org_members":
+            org = str(payload.get("org") or "test-org")
+            members = payload.get("members") or []
+            _STATE["org_members"][org] = members
+            self._send_json({"org": org, "members": members}, status=201)
+            return
+
         # POST /repos/{owner}/{repo}/pulls
         if re.match(r"^/repos/[^/]+/[^/]+/pulls$", path):
             num = _STATE["next_pr_number"]
@@ -110,10 +128,45 @@ class GitHubEmulatorHandler(http.server.BaseHTTPRequestHandler):
                 "draft": bool(payload.get("draft", False)),
                 "state": "open",
                 "user": {"login": "gh-repo-sync[bot]"},
+                "assignees": [],
+                "requested_reviewers": [],
                 "html_url": f"https://github.com/org/repo/pull/{num}",
             }
             _STATE["prs"][num] = pr
             _STATE["comments_by_pr"][num] = []
+            _STATE["reviews_by_pr"][num] = []
+            self._send_json(pr, status=201)
+            return
+
+        # POST /repos/{owner}/{repo}/issues/{number}/assignees
+        m_as = re.match(r"^/repos/[^/]+/[^/]+/issues/(\d+)/assignees$", path)
+        if m_as:
+            pr_num = int(m_as.group(1))
+            pr = _STATE["prs"].get(pr_num)
+            if not pr:
+                self._send_json({"message": "Not Found"}, status=404)
+                return
+            existing = {u["login"] for u in pr["assignees"]}
+            for login in payload.get("assignees") or []:
+                if login not in existing:
+                    pr["assignees"].append({"login": login})
+                    existing.add(login)
+            self._send_json(pr, status=201)
+            return
+
+        # POST /repos/{owner}/{repo}/pulls/{number}/requested_reviewers
+        m_rr = re.match(r"^/repos/[^/]+/[^/]+/pulls/(\d+)/requested_reviewers$", path)
+        if m_rr:
+            pr_num = int(m_rr.group(1))
+            pr = _STATE["prs"].get(pr_num)
+            if not pr:
+                self._send_json({"message": "Not Found"}, status=404)
+                return
+            existing = {u["login"] for u in pr["requested_reviewers"]}
+            for login in payload.get("reviewers") or []:
+                if login not in existing:
+                    pr["requested_reviewers"].append({"login": login})
+                    existing.add(login)
             self._send_json(pr, status=201)
             return
 
@@ -144,6 +197,43 @@ class GitHubEmulatorHandler(http.server.BaseHTTPRequestHandler):
         if path == "/graphql":
             query = str(payload.get("query") or "")
             variables = payload.get("variables") or {}
+
+            if "membersWithRole" in query:
+                org = str(variables.get("org") or "")
+                members = _STATE["org_members"].get(org)
+                if members is None:
+                    self._send_json(
+                        {
+                            "data": {
+                                "organization": {
+                                    "membersWithRole": {
+                                        "nodes": [],
+                                        "pageInfo": {
+                                            "hasNextPage": False,
+                                            "endCursor": None,
+                                        },
+                                    }
+                                }
+                            }
+                        }
+                    )
+                else:
+                    self._send_json(
+                        {
+                            "data": {
+                                "organization": {
+                                    "membersWithRole": {
+                                        "nodes": members,
+                                        "pageInfo": {
+                                            "hasNextPage": False,
+                                            "endCursor": None,
+                                        },
+                                    }
+                                }
+                            }
+                        }
+                    )
+                return
 
             if "minimizeComment" in query:
                 node_id = str(variables.get("id") or "")
@@ -251,6 +341,30 @@ class GitHubEmulatorHandler(http.server.BaseHTTPRequestHandler):
             return
 
         self._send_json({"message": f"Unhandled PATCH {path}"}, status=404)
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path.rstrip("/")
+        payload = self._read_json()
+
+        # DELETE /repos/{owner}/{repo}/pulls/{number}/requested_reviewers
+        m_rr = re.match(r"^/repos/[^/]+/[^/]+/pulls/(\d+)/requested_reviewers$", path)
+        if m_rr:
+            pr_num = int(m_rr.group(1))
+            pr = _STATE["prs"].get(pr_num)
+            if not pr:
+                self._send_json({"message": "Not Found"}, status=404)
+                return
+            to_remove = {str(r).lower() for r in (payload.get("reviewers") or [])}
+            pr["requested_reviewers"] = [
+                u
+                for u in pr["requested_reviewers"]
+                if str(u.get("login", "")).lower() not in to_remove
+            ]
+            self._send_json(pr, status=200)
+            return
+
+        self._send_json({"message": f"Unhandled DELETE {path}"}, status=404)
 
 
 if __name__ == "__main__":

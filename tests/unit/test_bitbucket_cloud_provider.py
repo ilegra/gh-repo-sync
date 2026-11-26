@@ -462,7 +462,7 @@ class TestBitbucketCloudPrExporter:
     def test_given_open_prs_single_page_when_getting_open_pull_requests_then_returns_parsed_prs(
         self,
     ) -> None:
-        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests?state=OPEN&pagelen=50"
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests?state=OPEN&pagelen=50&fields=%2Bvalues.reviewers"
         responses.add(
             responses.GET,
             url,
@@ -513,7 +513,7 @@ class TestBitbucketCloudPrExporter:
     def test_given_paginated_open_prs_when_getting_open_pull_requests_then_follows_next_links(
         self,
     ) -> None:
-        page1 = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests?state=OPEN&pagelen=50"
+        page1 = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests?state=OPEN&pagelen=50&fields=%2Bvalues.reviewers"
         page2 = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests?state=OPEN&pagelen=50&page=2"
         responses.add(
             responses.GET,
@@ -554,7 +554,7 @@ class TestBitbucketCloudPrExporter:
     def test_given_fork_pr_when_getting_open_pull_requests_then_marks_is_from_fork_true(
         self,
     ) -> None:
-        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests?state=OPEN&pagelen=50"
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests?state=OPEN&pagelen=50&fields=%2Bvalues.reviewers"
         responses.add(
             responses.GET,
             url,
@@ -585,7 +585,7 @@ class TestBitbucketCloudPrExporter:
     def test_given_pr_with_missing_optional_fields_when_getting_open_pull_requests_then_uses_safe_defaults(
         self,
     ) -> None:
-        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests?state=OPEN&pagelen=50"
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests?state=OPEN&pagelen=50&fields=%2Bvalues.reviewers"
         responses.add(
             responses.GET,
             url,
@@ -606,7 +606,7 @@ class TestBitbucketCloudPrExporter:
     def test_given_forbidden_api_response_when_getting_open_pull_requests_then_returns_empty_list(
         self,
     ) -> None:
-        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests?state=OPEN&pagelen=50"
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests?state=OPEN&pagelen=50&fields=%2Bvalues.reviewers"
         responses.add(responses.GET, url, status=403)
         assert self._make_exporter().get_open_pull_requests() == []
 
@@ -616,7 +616,7 @@ class TestBitbucketCloudPrExporter:
     ) -> None:
         import requests
 
-        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests?state=OPEN&pagelen=50"
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests?state=OPEN&pagelen=50&fields=%2Bvalues.reviewers"
         responses.add(responses.GET, url, body=requests.ConnectionError("timeout"))
         assert self._make_exporter().get_open_pull_requests() == []
 
@@ -733,3 +733,67 @@ class TestBitbucketCloudPrExporter:
 
         comments = self._make_exporter().get_pull_request_comments("10")
         assert [c.id for c in comments] == ["1", "2"]
+
+    @responses.activate
+    def test_given_open_pr_with_reviewers_when_getting_open_pull_requests_then_parses_display_names_and_nickname_fallback(
+        self,
+    ) -> None:
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests?state=OPEN&pagelen=50&fields=%2Bvalues.reviewers"
+        responses.add(
+            responses.GET,
+            url,
+            json={
+                "values": [
+                    {
+                        "id": 50,
+                        "title": "PR with reviewers",
+                        "author": {"display_name": "Jane Doe"},
+                        "reviewers": [
+                            {"display_name": "Alice Smith", "nickname": "asmith"},
+                            {"nickname": "bwayne"},
+                            {"display_name": "   "},
+                        ],
+                        "source": {"branch": {"name": "feat/rev"}},
+                        "destination": {"branch": {"name": "main"}},
+                    }
+                ]
+            },
+            status=200,
+        )
+
+        prs = self._make_exporter().get_open_pull_requests()
+        assert len(prs) == 1
+        assert prs[0].reviewers == ["Alice Smith", "bwayne"]
+
+    @responses.activate
+    def test_given_open_pr_with_missing_or_malformed_reviewers_when_getting_open_pull_requests_then_returns_empty_reviewers_list(
+        self,
+    ) -> None:
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests?state=OPEN&pagelen=50&fields=%2Bvalues.reviewers"
+        responses.add(
+            responses.GET,
+            url,
+            json={
+                "values": [
+                    {
+                        "id": 51,
+                        "title": "No reviewers",
+                        "source": {"branch": {"name": "feat/a"}},
+                        "destination": {"branch": {"name": "main"}},
+                    },
+                    {
+                        "id": 52,
+                        "title": "Malformed reviewers",
+                        "reviewers": ["not-a-dict", None, {}],
+                        "source": {"branch": {"name": "feat/b"}},
+                        "destination": {"branch": {"name": "main"}},
+                    },
+                ]
+            },
+            status=200,
+        )
+
+        prs = self._make_exporter().get_open_pull_requests()
+        assert len(prs) == 2
+        assert prs[0].reviewers == []
+        assert prs[1].reviewers == []

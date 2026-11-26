@@ -27,6 +27,175 @@ _ORIGIN_COMMENT_ID_PATTERN = re.compile(
 )
 _NEXT_LINK_PATTERN = re.compile(r'<([^>]+)>;\s*rel="next"')
 
+_ORG_MEMBERS_QUERY = """
+query($org: String!, $cursor: String) {
+  organization(login: $org) {
+    membersWithRole(first: 100, after: $cursor) {
+      nodes {
+        login
+        name
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+}
+"""
+
+
+class GitHubUserResolver:
+    """Resolves origin display names to GitHub logins via org members and overrides."""
+
+    def __init__(
+        self,
+        org: str,
+        graphql_url: str,
+        session: requests.Session,
+        headers: dict[str, str],
+        explicit_mapping: dict[str, str] | None = None,
+    ):
+        """
+        Initializes the GitHub user resolver.
+
+        Args:
+            org: Destination GitHub organization (or user) login.
+            graphql_url: GitHub GraphQL API endpoint URL.
+            session: Configured requests.Session instance.
+            headers: HTTP authentication and API headers.
+            explicit_mapping: Optional explicit origin display name to GitHub login
+                mapping that takes precedence over organization member lookup.
+        """
+        self._org = org
+        self._graphql_url = graphql_url
+        self._session = session
+        self._headers = headers
+        self._explicit_map: dict[str, str] = {}
+        for origin_name, gh_login in (explicit_mapping or {}).items():
+            norm_key = self._normalize_name(origin_name)
+            clean_login = gh_login.strip().lstrip("@")
+            if norm_key and clean_login:
+                self._explicit_map[norm_key] = clean_login
+
+        self._loaded = False
+        self._org_name_to_login: dict[str, str] = {}
+        self._ambiguous_names: set[str] = set()
+
+    @staticmethod
+    def _normalize_name(name: str) -> str:
+        return " ".join(name.strip().lower().split())
+
+    def _load_org_members(self) -> None:
+        if self._loaded:
+            return
+        self._loaded = True
+
+        cursor: str | None = None
+        try:
+            while True:
+                response = self._session.post(
+                    self._graphql_url,
+                    headers=self._headers,
+                    json={
+                        "query": _ORG_MEMBERS_QUERY,
+                        "variables": {"org": self._org, "cursor": cursor},
+                    },
+                    timeout=15,
+                )
+                if response.status_code != 200:
+                    logger.warning(
+                        "Failed to fetch GitHub organization members via GraphQL; "
+                        "falling back to plain-text user attribution",
+                        org=self._org,
+                        status_code=response.status_code,
+                    )
+                    return
+
+                payload: dict[str, Any] = response.json()
+                org_data = (payload.get("data") or {}).get("organization")
+                if not isinstance(org_data, dict):
+                    errors = payload.get("errors")
+                    logger.warning(
+                        "Unable to load GitHub organization members "
+                        "(ensure 'Organization -> Members: Read' permission is granted "
+                        "and destination owner is an organization)",
+                        org=self._org,
+                        errors=errors,
+                    )
+                    return
+
+                members_conn = org_data.get("membersWithRole") or {}
+                nodes = members_conn.get("nodes") or []
+                for node in nodes:
+                    if not isinstance(node, dict):
+                        continue
+                    login = node.get("login")
+                    name = node.get("name")
+                    if not isinstance(login, str) or not login.strip():
+                        continue
+                    if not isinstance(name, str) or not name.strip():
+                        continue
+
+                    norm_name = self._normalize_name(name)
+                    clean_login = login.strip()
+                    if norm_name in self._ambiguous_names:
+                        continue
+                    existing = self._org_name_to_login.get(norm_name)
+                    if existing is not None and existing.lower() != clean_login.lower():
+                        del self._org_name_to_login[norm_name]
+                        self._ambiguous_names.add(norm_name)
+                        logger.debug(
+                            "Ambiguous GitHub org member display name; "
+                            "skipping automatic resolution",
+                            org=self._org,
+                            display_name=name,
+                        )
+                    else:
+                        self._org_name_to_login[norm_name] = clean_login
+
+                page_info = members_conn.get("pageInfo") or {}
+                has_next = bool(page_info.get("hasNextPage", False))
+                end_cursor = page_info.get("endCursor")
+                if has_next and isinstance(end_cursor, str) and end_cursor:
+                    cursor = end_cursor
+                else:
+                    break
+        except Exception as e:
+            logger.warning(
+                "Failed to query GitHub organization members; "
+                "falling back to plain-text user attribution",
+                org=self._org,
+                error=str(e),
+            )
+
+    def resolve(self, display_name: str) -> str | None:
+        """
+        Resolves an origin user display name to a GitHub login (without '@').
+
+        Checks explicit mappings first, then falls back to unique destination
+        organization member display-name matching. Returns None if unresolved
+        or ambiguous.
+
+        Args:
+            display_name: Origin platform user display name.
+
+        Returns:
+            str | None: Resolved GitHub login without '@', or None if unresolved.
+        """
+        norm = self._normalize_name(display_name)
+        if not norm:
+            return None
+
+        explicit = self._explicit_map.get(norm)
+        if explicit is not None:
+            return explicit
+
+        self._load_org_members()
+        if norm in self._ambiguous_names:
+            return None
+        return self._org_name_to_login.get(norm)
+
 
 class GitHubPrImporter(PrImporter):
     """Pull request importer implementation for GitHub (github.com & Enterprise)."""
@@ -114,10 +283,16 @@ class GitHubPrImporter(PrImporter):
         return match.group(1) if match else None
 
     @staticmethod
-    def _format_pr_body(pr: PullRequest) -> str:
+    def _format_pr_body(
+        pr: PullRequest, resolver: GitHubUserResolver | None = None
+    ) -> str:
         origin_ref = f"[#{pr.id}]({pr.url})" if pr.url else f"#{pr.id}"
+        resolved_author = resolver.resolve(pr.author) if resolver else None
+        author_display = (
+            f"@{resolved_author}" if resolved_author else f"**{pr.author}**"
+        )
         header = (
-            f"> **Synced from origin** | Author: **{pr.author}** | "
+            f"> **Synced from origin** | Author: {author_display} | "
             f"Original PR: {origin_ref}"
         )
         parts = [header]
@@ -127,8 +302,14 @@ class GitHubPrImporter(PrImporter):
         return "\n\n".join(parts)
 
     @staticmethod
-    def _format_comment_body(comment: PullRequestComment) -> str:
-        meta = [f"**{comment.author}**"]
+    def _format_comment_body(
+        comment: PullRequestComment, resolver: GitHubUserResolver | None = None
+    ) -> str:
+        resolved_author = resolver.resolve(comment.author) if resolver else None
+        author_display = (
+            f"@{resolved_author}" if resolved_author else f"**{comment.author}**"
+        )
+        meta = [author_display]
         if comment.file_path:
             loc = (
                 f"`{comment.file_path}` (line {comment.line})"
@@ -161,6 +342,16 @@ class GitHubPrImporter(PrImporter):
             for item in items:
                 if not isinstance(item, dict):
                     continue
+                assignees = [
+                    str(u["login"])
+                    for u in (item.get("assignees") or [])
+                    if isinstance(u, dict) and u.get("login")
+                ]
+                reviewers = [
+                    str(u["login"])
+                    for u in (item.get("requested_reviewers") or [])
+                    if isinstance(u, dict) and u.get("login")
+                ]
                 prs.append(
                     PullRequest(
                         id=str(item.get("number", "")),
@@ -173,6 +364,8 @@ class GitHubPrImporter(PrImporter):
                         state=str(item.get("state") or "open").lower(),
                         is_draft=bool(item.get("draft", False)),
                         url=str(item.get("html_url") or ""),
+                        reviewers=reviewers,
+                        assignees=assignees,
                     )
                 )
             url = self._next_link(response.headers)
@@ -226,6 +419,152 @@ class GitHubPrImporter(PrImporter):
             url, headers=self._headers(), json={"state": "closed"}, timeout=15
         )
         response.raise_for_status()
+
+    def _add_assignees(self, pr_number: int, assignees: list[str]) -> bool:
+        if not assignees:
+            return False
+        url = f"{self._repo_api_url()}/issues/{pr_number}/assignees"
+        response = self._session.post(
+            url, headers=self._headers(), json={"assignees": assignees}, timeout=15
+        )
+        if response.status_code in (403, 422):
+            logger.warning(
+                "Skipping PR assignees update due to GitHub API error",
+                pr_number=pr_number,
+                assignees=assignees,
+                status_code=response.status_code,
+                body=response.text[:200],
+            )
+            return False
+        response.raise_for_status()
+        return True
+
+    def _list_pr_review_authors(self, pr_number: int) -> set[str]:
+        url: str | None = (
+            f"{self._repo_api_url()}/pulls/{pr_number}/reviews?per_page=100"
+        )
+        authors: set[str] = set()
+        try:
+            while url:
+                response = self._session.get(url, headers=self._headers(), timeout=15)
+                if response.status_code != 200:
+                    return authors
+                items = response.json()
+                if isinstance(items, list):
+                    for item in items:
+                        if not isinstance(item, dict):
+                            continue
+                        login = (item.get("user") or {}).get("login")
+                        if isinstance(login, str) and login.strip():
+                            authors.add(login.strip().lower())
+                url = self._next_link(response.headers)
+        except Exception as e:
+            logger.warning(
+                "Failed to list existing PR reviews",
+                pr_number=pr_number,
+                error=str(e),
+            )
+        return authors
+
+    def _request_reviewers(self, pr_number: int, reviewers: list[str]) -> bool:
+        if not reviewers:
+            return False
+        url = f"{self._repo_api_url()}/pulls/{pr_number}/requested_reviewers"
+        response = self._session.post(
+            url, headers=self._headers(), json={"reviewers": reviewers}, timeout=15
+        )
+        if response.status_code == 422:
+            if len(reviewers) > 1:
+                any_added = False
+                for reviewer in reviewers:
+                    if self._request_reviewers(pr_number, [reviewer]):
+                        any_added = True
+                return any_added
+            logger.warning(
+                "Skipping requested reviewer due to GitHub 422 validation error",
+                pr_number=pr_number,
+                reviewers=reviewers,
+                body=response.text[:200],
+            )
+            return False
+        if response.status_code == 403:
+            logger.warning(
+                "Skipping requested reviewers due to GitHub 403 permission error",
+                pr_number=pr_number,
+                reviewers=reviewers,
+            )
+            return False
+        response.raise_for_status()
+        return True
+
+    def _remove_requested_reviewers(self, pr_number: int, reviewers: list[str]) -> bool:
+        if not reviewers:
+            return False
+        url = f"{self._repo_api_url()}/pulls/{pr_number}/requested_reviewers"
+        response = self._session.delete(
+            url, headers=self._headers(), json={"reviewers": reviewers}, timeout=15
+        )
+        if response.status_code in (403, 404, 422):
+            logger.warning(
+                "Skipping removal of requested reviewers due to GitHub API error",
+                pr_number=pr_number,
+                reviewers=reviewers,
+                status_code=response.status_code,
+            )
+            return False
+        response.raise_for_status()
+        return True
+
+    def _reconcile_pr_users(
+        self,
+        pr_number: int,
+        origin_pr: PullRequest,
+        existing_gh_pr: PullRequest | None,
+        resolver: GitHubUserResolver,
+    ) -> bool:
+        changed = False
+
+        author_login = resolver.resolve(origin_pr.author)
+        existing_assignees = {
+            a.lower() for a in (existing_gh_pr.assignees if existing_gh_pr else [])
+        }
+        if author_login and author_login.lower() not in existing_assignees:
+            if self._add_assignees(pr_number, [author_login]):
+                changed = True
+
+        desired_reviewers: list[str] = []
+        desired_lower: set[str] = set()
+        for reviewer_name in origin_pr.reviewers:
+            login = resolver.resolve(reviewer_name)
+            if login and login.lower() not in desired_lower:
+                desired_lower.add(login.lower())
+                desired_reviewers.append(login)
+
+        if existing_gh_pr is None:
+            if desired_reviewers and self._request_reviewers(
+                pr_number, desired_reviewers
+            ):
+                changed = True
+            return changed
+
+        existing_requested = existing_gh_pr.reviewers
+        existing_requested_lower = {r.lower() for r in existing_requested}
+
+        to_add = [
+            r for r in desired_reviewers if r.lower() not in existing_requested_lower
+        ]
+        to_remove = [r for r in existing_requested if r.lower() not in desired_lower]
+
+        if to_add:
+            already_reviewed = self._list_pr_review_authors(pr_number)
+            to_add = [r for r in to_add if r.lower() not in already_reviewed]
+            if to_add and self._request_reviewers(pr_number, to_add):
+                changed = True
+
+        if to_remove and self._remove_requested_reviewers(pr_number, to_remove):
+            changed = True
+
+        return changed
 
     def _fetch_comment_minimized_states(self, node_ids: list[str]) -> dict[str, bool]:
         if not node_ids:
@@ -353,6 +692,7 @@ class GitHubPrImporter(PrImporter):
         origin_pr_id: str,
         pr_exporter: PrExporter,
         result: PrSyncResult,
+        resolver: GitHubUserResolver | None = None,
     ) -> None:
         origin_comments = pr_exporter.get_pull_request_comments(origin_pr_id)
         if not origin_comments:
@@ -366,7 +706,9 @@ class GitHubPrImporter(PrImporter):
                 tracked_comments[marker_id] = gh_comment
 
         for origin_comment in origin_comments:
-            formatted_body = self._format_comment_body(origin_comment)
+            formatted_body = self._format_comment_body(
+                origin_comment, resolver=resolver
+            )
             existing = tracked_comments.get(origin_comment.id)
 
             if existing is None:
@@ -397,6 +739,7 @@ class GitHubPrImporter(PrImporter):
         origin_pr_id: str,
         pr_exporter: PrExporter,
         result: PrSyncResult,
+        resolver: GitHubUserResolver | None = None,
     ) -> None:
         if gh_pr.number is None:
             return
@@ -404,7 +747,9 @@ class GitHubPrImporter(PrImporter):
         origin_pr = pr_exporter.get_pull_request(origin_pr_id)
         final_state = origin_pr.state if origin_pr else "closed"
 
-        self._sync_pr_comments(gh_pr.number, origin_pr_id, pr_exporter, result)
+        self._sync_pr_comments(
+            gh_pr.number, origin_pr_id, pr_exporter, result, resolver=resolver
+        )
 
         note = (
             f"This pull request was **{final_state}** on Bitbucket Cloud "
@@ -420,6 +765,7 @@ class GitHubPrImporter(PrImporter):
         pr_exporter: PrExporter,
         branch_mapping: dict[str, str] | None = None,
         available_branches: set[str] | None = None,
+        user_mapping: dict[str, str] | None = None,
     ) -> PrSyncResult:
         """
         Reconciles open and completed pull requests and their comments on GitHub.
@@ -429,12 +775,21 @@ class GitHubPrImporter(PrImporter):
             pr_exporter: Exporter used to fetch comments and final PR states.
             branch_mapping: Optional mapping from origin to destination branch names.
             available_branches: Optional set of destination branch names that exist.
+            user_mapping: Optional explicit mapping from origin display names to
+                GitHub logins.
 
         Returns:
             PrSyncResult: Summary of created, updated, closed PRs, comments, and errors.
         """
         result = PrSyncResult()
         mapping = branch_mapping or {}
+        resolver = GitHubUserResolver(
+            org=self.owner,
+            graphql_url=self._graphql_url,
+            session=self._session,
+            headers=self._headers(),
+            explicit_mapping=user_mapping,
+        )
 
         try:
             open_gh_prs = self._list_open_pull_requests()
@@ -481,11 +836,12 @@ class GitHubPrImporter(PrImporter):
                 continue
 
             active_origin_ids.add(origin_pr.id)
-            formatted_body = self._format_pr_body(origin_pr)
+            formatted_body = self._format_pr_body(origin_pr, resolver=resolver)
 
             try:
                 existing_gh_pr = tracked_gh_prs.get(origin_pr.id)
                 if existing_gh_pr is not None and existing_gh_pr.number is not None:
+                    pr_updated = False
                     if (
                         existing_gh_pr.title != origin_pr.title
                         or existing_gh_pr.description != formatted_body
@@ -497,10 +853,22 @@ class GitHubPrImporter(PrImporter):
                             formatted_body,
                             mapped_target,
                         )
+                        pr_updated = True
+
+                    if self._reconcile_pr_users(
+                        existing_gh_pr.number, origin_pr, existing_gh_pr, resolver
+                    ):
+                        pr_updated = True
+
+                    if pr_updated:
                         result.updated_prs.append(existing_gh_pr.number)
 
                     self._sync_pr_comments(
-                        existing_gh_pr.number, origin_pr.id, pr_exporter, result
+                        existing_gh_pr.number,
+                        origin_pr.id,
+                        pr_exporter,
+                        result,
+                        resolver=resolver,
                     )
                 else:
                     pr_number = self._create_pull_request(
@@ -512,8 +880,13 @@ class GitHubPrImporter(PrImporter):
                     )
                     if pr_number is not None:
                         result.created_prs.append(pr_number)
+                        self._reconcile_pr_users(pr_number, origin_pr, None, resolver)
                         self._sync_pr_comments(
-                            pr_number, origin_pr.id, pr_exporter, result
+                            pr_number,
+                            origin_pr.id,
+                            pr_exporter,
+                            result,
+                            resolver=resolver,
                         )
             except Exception as e:
                 msg = f"Failed to reconcile origin PR #{origin_pr.id}: {e}"
@@ -528,7 +901,7 @@ class GitHubPrImporter(PrImporter):
             if origin_id not in active_origin_ids:
                 try:
                     self._close_completed_pull_request(
-                        gh_pr, origin_id, pr_exporter, result
+                        gh_pr, origin_id, pr_exporter, result, resolver=resolver
                     )
                 except Exception as e:
                     msg = (

@@ -205,6 +205,7 @@ class TestGitHubPrImporterIntegration:
         bb_base_url: str,
         gh_base_url: str,
         sync_pull_requests: bool,
+        pr_user_mapping: str = "",
     ) -> Any:
         from src.config import SyncConfig
         from src.core.sync import SyncManager
@@ -219,6 +220,7 @@ class TestGitHubPrImporterIntegration:
                 DESTINATION_URL="https://github.com/test-org/test-repo",
                 DESTINATION_TOKEN="gh-test-token",
                 SYNC_PULL_REQUESTS=sync_pull_requests,
+                PR_USER_MAPPING=pr_user_mapping,
             )
             git_client = Git(repo_dir)
             origin = _ContainerizedBitbucketOrigin(
@@ -488,5 +490,138 @@ class TestGitHubPrImporterIntegration:
             node = gql_resp["data"]["node"]
             assert node["isMinimized"] is True
             assert node["minimizedReason"] == "RESOLVED"
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_given_org_members_and_pr_with_reviewers_when_syncing_then_assigns_author_requests_reviewers_and_mentions_users(
+        self,
+        bitbucket_cloud_container: dict[str, Any],
+        github_container: dict[str, Any],
+    ) -> None:
+        import requests
+
+        bb_url = bitbucket_cloud_container["base_url"]
+        gh_url = github_container["base_url"]
+
+        root = tempfile.mkdtemp(prefix="pr_int_repos_")
+        try:
+            origin_bare, dest_bare = _setup_seeded_git_repos(root)
+            requests.post(
+                f"{gh_url}/_seed/org_members",
+                json={
+                    "org": "test-org",
+                    "members": [
+                        {"login": "jdoe", "name": "Jane Doe"},
+                        {"login": "bsmith", "name": "Bob Smith"},
+                        {"login": "cwhite", "name": "Carol White"},
+                    ],
+                },
+                timeout=5,
+            ).raise_for_status()
+            requests.post(
+                f"{bb_url}/_seed/pullrequests",
+                json={
+                    "id": 91,
+                    "title": "Resolve users PR",
+                    "description": "Body",
+                    "author": "Jane Doe",
+                    "reviewers": ["Bob Smith", "Carol White"],
+                    "source_branch": "feat/pr-sync",
+                    "target_branch": "main",
+                },
+                timeout=5,
+            ).raise_for_status()
+            requests.post(
+                f"{bb_url}/_seed/pullrequests/91/comments",
+                json={"id": 701, "body": "LGTM!", "author": "Bob Smith"},
+                timeout=5,
+            ).raise_for_status()
+
+            result = self._run_sync(
+                origin_bare, dest_bare, bb_url, gh_url, sync_pull_requests=True
+            )
+            assert result.errors == []
+
+            gh_prs = requests.get(
+                f"{gh_url}/repos/test-org/test-repo/pulls?state=open", timeout=5
+            ).json()
+            assert len(gh_prs) == 1
+            pr = gh_prs[0]
+            assert "Author: @jdoe" in pr["body"]
+            assert [u["login"] for u in pr["assignees"]] == ["jdoe"]
+            assert [u["login"] for u in pr["requested_reviewers"]] == [
+                "bsmith",
+                "cwhite",
+            ]
+
+            comments = requests.get(
+                f"{gh_url}/repos/test-org/test-repo/issues/{pr['number']}/comments",
+                timeout=5,
+            ).json()
+            assert len(comments) == 1
+            assert comments[0]["body"].startswith("> @bsmith\n\nLGTM!")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_given_pr_user_mapping_override_when_syncing_then_resolves_mapped_users_and_falls_back_for_unknown(
+        self,
+        bitbucket_cloud_container: dict[str, Any],
+        github_container: dict[str, Any],
+    ) -> None:
+        import requests
+
+        bb_url = bitbucket_cloud_container["base_url"]
+        gh_url = github_container["base_url"]
+
+        root = tempfile.mkdtemp(prefix="pr_int_repos_")
+        try:
+            origin_bare, dest_bare = _setup_seeded_git_repos(root)
+            requests.post(
+                f"{bb_url}/_seed/pullrequests",
+                json={
+                    "id": 92,
+                    "title": "Mapped users PR",
+                    "author": "Doe, Jane",
+                    "reviewers": ["External Reviewer"],
+                    "source_branch": "feat/pr-sync",
+                    "target_branch": "main",
+                },
+                timeout=5,
+            ).raise_for_status()
+            requests.post(
+                f"{bb_url}/_seed/pullrequests/92/comments",
+                json={
+                    "id": 702,
+                    "body": "Question",
+                    "author": "External Reviewer",
+                },
+                timeout=5,
+            ).raise_for_status()
+
+            result = self._run_sync(
+                origin_bare,
+                dest_bare,
+                bb_url,
+                gh_url,
+                sync_pull_requests=True,
+                pr_user_mapping='{"Doe, Jane": "jdoe"}',
+            )
+            assert result.errors == []
+
+            gh_prs = requests.get(
+                f"{gh_url}/repos/test-org/test-repo/pulls?state=open", timeout=5
+            ).json()
+            assert len(gh_prs) == 1
+            pr = gh_prs[0]
+            assert "Author: @jdoe" in pr["body"]
+            assert [u["login"] for u in pr["assignees"]] == ["jdoe"]
+            assert pr["requested_reviewers"] == []
+
+            comments = requests.get(
+                f"{gh_url}/repos/test-org/test-repo/issues/{pr['number']}/comments",
+                timeout=5,
+            ).json()
+            assert len(comments) == 1
+            assert comments[0]["body"].startswith("> **External Reviewer**\n\nQuestion")
         finally:
             shutil.rmtree(root, ignore_errors=True)

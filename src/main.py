@@ -74,6 +74,10 @@ def main(argv: list[str] | None = None) -> int:
             "  SYNC_PULL_REQUESTS           "
             "Sync open pull requests and comments (true/false)"
         )
+        print(
+            "  PR_USER_MAPPING              "
+            "Optional origin-to-GitHub user mapping (JSON or name:login)"
+        )
         return 0
 
     _setup_logging()

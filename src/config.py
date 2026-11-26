@@ -1,3 +1,4 @@
+import json
 import os
 from typing import Any, Final
 
@@ -33,6 +34,7 @@ class SyncConfig(BaseSettings):
     )
     sync_json_file: str = Field("sync.json", validation_alias="SYNC_JSON_FILE")
     sync_pull_requests: bool = Field(False, validation_alias="SYNC_PULL_REQUESTS")
+    pr_user_mapping_raw: str = Field("", validation_alias="PR_USER_MAPPING")
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -54,6 +56,25 @@ class SyncConfig(BaseSettings):
         if v is None or not str(v).strip():
             return DEFAULT_FALLBACK_BOT_EMAIL
         return str(v).strip()
+
+    @field_validator("pr_user_mapping_raw", mode="before")
+    @classmethod
+    def _validate_pr_user_mapping_raw(cls, v: Any) -> str:
+        if v is None:
+            return ""
+        raw = str(v).strip()
+        if raw.startswith("{"):
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Invalid JSON in PR_USER_MAPPING: {exc}") from exc
+            if not isinstance(parsed, dict) or not all(
+                isinstance(k, str) and isinstance(val, str) for k, val in parsed.items()
+            ):
+                raise ValueError(
+                    "PR_USER_MAPPING JSON must be an object mapping strings to strings"
+                )
+        return str(v)
 
     @model_validator(mode="before")
     @classmethod
@@ -96,6 +117,7 @@ class SyncConfig(BaseSettings):
             ],
             "sync_json_file": ["SYNC_JSON_FILE"],
             "sync_pull_requests": ["SYNC_PULL_REQUESTS"],
+            "pr_user_mapping_raw": ["PR_USER_MAPPING"],
         }
         res = dict(data) if isinstance(data, dict) else {}
         for field, alt_keys in aliases.items():
@@ -191,6 +213,41 @@ class SyncConfig(BaseSettings):
         Reverses branch_mapping: {destination_branch: origin_branch}
         """
         return {v: k for k, v in self.branch_mapping.items()}
+
+    @property
+    def pr_user_mapping(self) -> dict[str, str]:
+        """
+        Parses PR_USER_MAPPING into a dict mapping origin display names to GitHub
+        logins (without leading '@').
+
+        Supports both JSON object syntax (e.g. '{"Doe, Jane": "jdoe"}') and
+        comma-separated 'Display Name:github-login' pairs.
+        """
+        raw = self.pr_user_mapping_raw.strip()
+        if not raw:
+            return {}
+
+        mapping: dict[str, str] = {}
+        if raw.startswith("{"):
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                for origin_name, gh_login in parsed.items():
+                    key = str(origin_name).strip()
+                    val = str(gh_login).strip().lstrip("@")
+                    if key and val:
+                        mapping[key] = val
+            return mapping
+
+        for pair in raw.split(","):
+            pair = pair.strip()
+            if not pair or ":" not in pair:
+                continue
+            origin_name, gh_login = pair.split(":", 1)
+            key = origin_name.strip()
+            val = gh_login.strip().lstrip("@")
+            if key and val:
+                mapping[key] = val
+        return mapping
 
 
 class SyncResult(BaseModel):

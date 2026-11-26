@@ -58,6 +58,10 @@ inputs:
     description: 'Opt-in synchronization of open pull requests and comments from origin to GitHub'
     required: false
     default: 'false'
+  pr-user-mapping:
+    description: 'Optional explicit user mapping override (JSON object or comma-separated "Display Name:github-login")'
+    required: false
+    default: ''
 
 outputs:
   sync-result:
@@ -81,3 +85,4 @@ runs:
     BOT_NAME: ${{ inputs.bot-name }}
     BOT_EMAIL: ${{ inputs.bot-email }}
     SYNC_PULL_REQUESTS: ${{ inputs.sync-pull-requests }}
+    PR_USER_MAPPING: ${{ inputs.pr-user-mapping }}

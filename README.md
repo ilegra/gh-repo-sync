@@ -123,10 +123,11 @@ When `sync-pull-requests: 'true'` (or `SYNC_PULL_REQUESTS=true`) is enabled with
 
 - **Required Permissions**:
   - **Bitbucket Cloud**: `Pull requests: Read` (in addition to `Repositories: Read`).
-  - **GitHub**: `pull-requests: write` (in addition to `contents: write`).
+  - **GitHub**: `pull-requests: write` (in addition to `contents: write`), plus `Organization → Members: Read` (GitHub App) or `read:org` (classic PAT) to automatically resolve Bitbucket Cloud display names to GitHub `@login` handles. If `Organization → Members: Read` is not granted (or the destination is a personal account), sync falls back gracefully to `pr-user-mapping` (if configured) and plain-text attribution.
 - **Lifecycle Reconciliation**:
   - Creates GitHub PRs for open Bitbucket Cloud PRs (preserving title, description, draft status, and branch mappings) with an attribution header and hidden tracking marker (`<!-- gh-repo-sync:origin-pr-id=... -->`).
-  - Updates existing tracked GitHub PRs when title, description, or target branch changes.
+  - Automatically resolves Bitbucket Cloud PR authors, reviewers, and comment authors to GitHub `@login` handles via destination organization members (and optional `pr-user-mapping` overrides): assigns resolved PR authors, syncs resolved reviewers to `requested_reviewers`, and renders `@<login>` mentions in PR and comment headers (falling back to `**display_name**` when unresolved or ambiguous).
+  - Updates existing tracked GitHub PRs when title, description, target branch, assignees, or reviewers change.
   - Syncs general and inline comments (creating new comments, updating edited ones, and minimizing/unminimizing resolved comments natively via GitHub GraphQL).
   - Automatically syncs final comments, posts a closing status note (`merged`, `declined`, or `superseded`), and closes tracked GitHub PRs when completed on Bitbucket Cloud (before branch pruning).
   - Native GitHub PRs without a tracking marker are never modified.
@@ -149,6 +150,7 @@ When `sync-pull-requests: 'true'` (or `SYNC_PULL_REQUESTS=true`) is enabled with
 | `bot-name` | No | `""` | Legacy alias for `committer-name`. |
 | `bot-email` | No | `""` | Legacy alias for `committer-email`. |
 | `sync-pull-requests` | No | `'false'` | Opt-in synchronization of open pull requests and comments from Bitbucket Cloud to GitHub. |
+| `pr-user-mapping` | No | `""` | Optional explicit origin-to-GitHub user mapping override (JSON object `'{"Doe, Jane": "jdoe"}'` or comma-separated `Display Name:github-login`). |
 
 ### Action Outputs
 
@@ -354,6 +356,7 @@ For standalone or local container execution, the following environment variables
 | `COMMITTER_NAME` | Git bot author/committer name fallback (default: `github-actions[bot]`). |
 | `COMMITTER_EMAIL` | Git bot author/committer email fallback (default: `github-actions[bot]@users.noreply.github.com`). |
 | `SYNC_PULL_REQUESTS` | Opt-in flag (`true`/`false`, default: `false`) to synchronize open pull requests and comments from Bitbucket Cloud to GitHub. |
+| `PR_USER_MAPPING` | Optional explicit origin-to-GitHub user mapping override (JSON object `'{"Doe, Jane": "jdoe"}'` or comma-separated `Display Name:github-login`). |
 
 ## Development and Testing
 

@@ -24,6 +24,8 @@ class PullRequest:
     is_from_fork: bool = False
     url: str = ""
     number: int | None = None
+    reviewers: list[str] = field(default_factory=list)
+    assignees: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -82,6 +84,7 @@ class PrImporter(ABC):
         pr_exporter: PrExporter,
         branch_mapping: dict[str, str] | None = None,
         available_branches: set[str] | None = None,
+        user_mapping: dict[str, str] | None = None,
     ) -> PrSyncResult:
         """
         Reconciles open and completed pull requests and their comments on destination.
@@ -91,6 +94,8 @@ class PrImporter(ABC):
             pr_exporter: Exporter used to fetch comments and final PR states.
             branch_mapping: Optional mapping from origin to destination branch names.
             available_branches: Optional set of destination branch names that exist.
+            user_mapping: Optional explicit mapping from origin display names to
+                destination user logins.
 
         Returns:
             PrSyncResult: Summary of created, updated, closed PRs, comments, and errors.
