@@ -38,6 +38,8 @@ class GitHubPrImporter(PrImporter):
         token: str,
         host: str = "github.com",
         session: requests.Session | None = None,
+        api_base_url: str | None = None,
+        graphql_url: str | None = None,
     ):
         """
         Initializes the GitHub PR importer.
@@ -48,6 +50,8 @@ class GitHubPrImporter(PrImporter):
             token: GitHub authentication token.
             host: GitHub hostname (defaults to 'github.com').
             session: Optional requests.Session instance.
+            api_base_url: Optional REST API base URL override.
+            graphql_url: Optional GraphQL endpoint URL override.
         """
         self.owner = owner
         self.repo = repo
@@ -55,12 +59,17 @@ class GitHubPrImporter(PrImporter):
         self._token = token
         self._session = session or self._create_session()
 
-        if host.lower() == "github.com":
+        if api_base_url:
+            self._api_base = api_base_url.rstrip("/")
+            self._graphql_url = (
+                graphql_url.rstrip("/") if graphql_url else f"{self._api_base}/graphql"
+            )
+        elif host.lower() == "github.com":
             self._api_base = "https://api.github.com"
-            self._graphql_url = "https://api.github.com/graphql"
+            self._graphql_url = graphql_url or "https://api.github.com/graphql"
         else:
             self._api_base = f"https://{host}/api/v3"
-            self._graphql_url = f"https://{host}/api/graphql"
+            self._graphql_url = graphql_url or f"https://{host}/api/graphql"
 
     @staticmethod
     def _create_session() -> requests.Session:
@@ -546,6 +555,7 @@ class GitHubProvider(DestinationProvider):
         token: str,
         git: Git,
         remote_name: str = "destination_remote",
+        api_base_url: str | None = None,
     ):
         """
         Initializes the GitHub Provider.
@@ -555,11 +565,13 @@ class GitHubProvider(DestinationProvider):
             token: Authentication token.
             git: Initialized Git client for executing commits.
             remote_name: Name of git remote tracking this repository.
+            api_base_url: Optional REST API base URL override.
         """
         self.repo_url = repo_url
         self.token = token
         self.git = git
         self.remote_name = remote_name
+        self._api_base_url = api_base_url
         self._pr_importer: GitHubPrImporter | None = None
 
     def _parse_github_url(self) -> tuple[str, str, str] | None:
@@ -586,6 +598,7 @@ class GitHubProvider(DestinationProvider):
             repo=repo,
             token=self.token,
             host=host,
+            api_base_url=self._api_base_url,
         )
         return self._pr_importer
 

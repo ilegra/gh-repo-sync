@@ -30,6 +30,7 @@ class BitbucketCloudPrExporter(PrExporter):
         repo_slug: str,
         session: requests.Session,
         auth_headers: dict[str, str],
+        api_base_url: str = "https://api.bitbucket.org/2.0",
     ):
         """
         Initializes the Bitbucket Cloud PR exporter.
@@ -39,16 +40,18 @@ class BitbucketCloudPrExporter(PrExporter):
             repo_slug: Bitbucket Cloud repository slug.
             session: Configured requests.Session with retry strategy.
             auth_headers: Authentication headers for Bitbucket Cloud API.
+            api_base_url: Base URL for Bitbucket Cloud REST 2.0 API.
         """
         self.workspace = workspace
         self.repo_slug = repo_slug
         self._session = session
         self._auth_headers = auth_headers
+        self._api_base_url = api_base_url.rstrip("/")
 
     def _base_api_url(self) -> str:
         workspace_q = urllib.parse.quote(self.workspace, safe="")
         repo_q = urllib.parse.quote(self.repo_slug, safe="")
-        return f"https://api.bitbucket.org/2.0/repositories/{workspace_q}/{repo_q}"
+        return f"{self._api_base_url}/repositories/{workspace_q}/{repo_q}"
 
     def _parse_pull_request(self, item: dict[str, Any]) -> PullRequest:
         source = item.get("source") or {}
@@ -235,6 +238,7 @@ class BitbucketCloudProvider(OriginProvider):
         username: str | None = None,
         git: Git | None = None,
         remote_name: str = "origin_remote",
+        api_base_url: str = "https://api.bitbucket.org/2.0",
     ):
         """
         Initializes the Bitbucket Cloud Provider.
@@ -245,12 +249,14 @@ class BitbucketCloudProvider(OriginProvider):
             username: Optional Bitbucket username for App Password authentication.
             git: Optional initialized Git client.
             remote_name: Name of git remote tracking this repository.
+            api_base_url: Base URL for Bitbucket Cloud REST 2.0 API.
         """
         self.repo_url = repo_url
         self.token = token
         self.username = username.strip() if username and username.strip() else None
         self.git = git
         self.remote_name = remote_name
+        self._api_base_url = api_base_url.rstrip("/")
         self._session: requests.Session | None = None
         self._repo_metadata: dict[str, Any] | None = None
         self._pr_exporter: BitbucketCloudPrExporter | None = None
@@ -425,6 +431,7 @@ class BitbucketCloudProvider(OriginProvider):
             repo_slug=repo_slug,
             session=self._get_session(),
             auth_headers=self._get_auth_headers(),
+            api_base_url=self._api_base_url,
         )
         return self._pr_exporter
 
