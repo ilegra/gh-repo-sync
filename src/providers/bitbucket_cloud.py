@@ -254,7 +254,8 @@ class BitbucketCloudPrExporter(PrExporter):
         """Returns all non-deleted comments for the given Bitbucket Cloud PR ID."""
         pr_q = urllib.parse.quote(str(pr_id), safe="")
         url: str | None = (
-            f"{self._base_api_url()}/pullrequests/{pr_q}/comments?pagelen=100"
+            f"{self._base_api_url()}/pullrequests/{pr_q}/comments"
+            "?pagelen=100&fields=%2Bvalues.resolution.*"
         )
         comments: list[PullRequestComment] = []
         raw_parent_by_id: dict[str, str | None] = {}
