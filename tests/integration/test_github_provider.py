@@ -625,3 +625,515 @@ class TestGitHubPrImporterIntegration:
             assert comments[0]["body"].startswith("> **External Reviewer**\n\nQuestion")
         finally:
             shutil.rmtree(root, ignore_errors=True)
+
+    def test_given_inline_single_line_multiline_and_file_comments_when_syncing_then_destination_pr_has_native_review_comments_with_head_sha(
+        self,
+        bitbucket_cloud_container: dict[str, Any],
+        github_container: dict[str, Any],
+    ) -> None:
+        import requests
+
+        bb_url = bitbucket_cloud_container["base_url"]
+        gh_url = github_container["base_url"]
+
+        root = tempfile.mkdtemp(prefix="pr_int_repos_")
+        try:
+            origin_bare, dest_bare = _setup_seeded_git_repos(root)
+            requests.post(
+                f"{bb_url}/_seed/pullrequests",
+                json={
+                    "id": 101,
+                    "title": "Inline comments PR",
+                    "source_branch": "feat/pr-sync",
+                    "target_branch": "main",
+                },
+                timeout=5,
+            ).raise_for_status()
+            requests.post(
+                f"{bb_url}/_seed/pullrequests/101/comments",
+                json={
+                    "id": 801,
+                    "body": "Right side note",
+                    "author": "Alice",
+                    "file_path": "README.md",
+                    "to": 12,
+                },
+                timeout=5,
+            ).raise_for_status()
+            requests.post(
+                f"{bb_url}/_seed/pullrequests/101/comments",
+                json={
+                    "id": 802,
+                    "body": "Left side note",
+                    "author": "Bob",
+                    "file_path": "README.md",
+                    "from": 8,
+                },
+                timeout=5,
+            ).raise_for_status()
+            requests.post(
+                f"{bb_url}/_seed/pullrequests/101/comments",
+                json={
+                    "id": 803,
+                    "body": "Multi-line note",
+                    "author": "Carol",
+                    "file_path": "feature.txt",
+                    "start_to": 2,
+                    "to": 6,
+                },
+                timeout=5,
+            ).raise_for_status()
+            requests.post(
+                f"{bb_url}/_seed/pullrequests/101/comments",
+                json={
+                    "id": 804,
+                    "body": "File-level note",
+                    "author": "Dave",
+                    "file_path": "feature.txt",
+                },
+                timeout=5,
+            ).raise_for_status()
+
+            result = self._run_sync(
+                origin_bare, dest_bare, bb_url, gh_url, sync_pull_requests=True
+            )
+            assert result.errors == []
+
+            gh_prs = requests.get(
+                f"{gh_url}/repos/test-org/test-repo/pulls?state=open", timeout=5
+            ).json()
+            pr_num = gh_prs[0]["number"]
+            expected_sha = gh_prs[0]["head"]["sha"]
+            assert expected_sha
+
+            review_comments = requests.get(
+                f"{gh_url}/repos/test-org/test-repo/pulls/{pr_num}/comments", timeout=5
+            ).json()
+            issue_comments = requests.get(
+                f"{gh_url}/repos/test-org/test-repo/issues/{pr_num}/comments", timeout=5
+            ).json()
+            assert issue_comments == []
+            assert len(review_comments) == 4
+
+            by_marker = {
+                c["body"].split("origin-comment-id=")[1].split(" ")[0]: c
+                for c in review_comments
+            }
+            assert by_marker["801"]["commit_id"] == expected_sha
+            assert by_marker["801"]["path"] == "README.md"
+            assert by_marker["801"]["line"] == 12
+            assert by_marker["801"]["side"] == "RIGHT"
+
+            assert by_marker["802"]["line"] == 8
+            assert by_marker["802"]["side"] == "LEFT"
+
+            assert by_marker["803"]["start_line"] == 2
+            assert by_marker["803"]["start_side"] == "RIGHT"
+            assert by_marker["803"]["line"] == 6
+            assert by_marker["803"]["side"] == "RIGHT"
+
+            assert by_marker["804"]["path"] == "feature.txt"
+            assert by_marker["804"]["subject_type"] == "file"
+            assert by_marker["804"]["line"] is None
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_given_continuous_sync_with_new_threaded_and_nested_replies_when_syncing_then_destination_pr_attaches_replies_to_existing_root_review_comment(
+        self,
+        bitbucket_cloud_container: dict[str, Any],
+        github_container: dict[str, Any],
+    ) -> None:
+        import requests
+
+        bb_url = bitbucket_cloud_container["base_url"]
+        gh_url = github_container["base_url"]
+
+        root = tempfile.mkdtemp(prefix="pr_int_repos_")
+        try:
+            origin_bare, dest_bare = _setup_seeded_git_repos(root)
+            requests.post(
+                f"{bb_url}/_seed/pullrequests",
+                json={
+                    "id": 102,
+                    "title": "Threaded replies PR",
+                    "source_branch": "feat/pr-sync",
+                    "target_branch": "main",
+                },
+                timeout=5,
+            ).raise_for_status()
+            requests.post(
+                f"{bb_url}/_seed/pullrequests/102/comments",
+                json={
+                    "id": 810,
+                    "body": "Root inline comment",
+                    "author": "Alice",
+                    "file_path": "feature.txt",
+                    "to": 1,
+                },
+                timeout=5,
+            ).raise_for_status()
+
+            # Run 1: create PR and root inline review comment
+            res1 = self._run_sync(
+                origin_bare, dest_bare, bb_url, gh_url, sync_pull_requests=True
+            )
+            assert res1.errors == []
+
+            gh_prs = requests.get(
+                f"{gh_url}/repos/test-org/test-repo/pulls?state=open", timeout=5
+            ).json()
+            pr_num = gh_prs[0]["number"]
+            rc1 = requests.get(
+                f"{gh_url}/repos/test-org/test-repo/pulls/{pr_num}/comments", timeout=5
+            ).json()
+            assert len(rc1) == 1
+            root_gh_id = rc1[0]["id"]
+
+            # Run 2: add direct reply + nested reply on Bitbucket
+            requests.post(
+                f"{bb_url}/_seed/pullrequests/102/comments",
+                json={
+                    "id": 811,
+                    "body": "Direct reply",
+                    "author": "Bob",
+                    "parent_id": 810,
+                },
+                timeout=5,
+            ).raise_for_status()
+            requests.post(
+                f"{bb_url}/_seed/pullrequests/102/comments",
+                json={
+                    "id": 812,
+                    "body": "Nested reply",
+                    "author": "Alice",
+                    "parent_id": 811,
+                },
+                timeout=5,
+            ).raise_for_status()
+
+            res2 = self._run_sync(
+                origin_bare, dest_bare, bb_url, gh_url, sync_pull_requests=True
+            )
+            assert res2.errors == []
+
+            rc2 = requests.get(
+                f"{gh_url}/repos/test-org/test-repo/pulls/{pr_num}/comments", timeout=5
+            ).json()
+            assert len(rc2) == 3
+            replies = [c for c in rc2 if c["id"] != root_gh_id]
+            assert len(replies) == 2
+            assert all(r["in_reply_to_id"] == root_gh_id for r in replies)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_given_continuous_sync_when_inline_comment_edited_and_thread_resolved_then_destination_review_comment_updated_and_thread_resolved(
+        self,
+        bitbucket_cloud_container: dict[str, Any],
+        github_container: dict[str, Any],
+    ) -> None:
+        import requests
+
+        bb_url = bitbucket_cloud_container["base_url"]
+        gh_url = github_container["base_url"]
+
+        root = tempfile.mkdtemp(prefix="pr_int_repos_")
+        try:
+            origin_bare, dest_bare = _setup_seeded_git_repos(root)
+            requests.post(
+                f"{bb_url}/_seed/pullrequests",
+                json={
+                    "id": 103,
+                    "title": "Edit and resolve PR",
+                    "source_branch": "feat/pr-sync",
+                    "target_branch": "main",
+                },
+                timeout=5,
+            ).raise_for_status()
+            requests.post(
+                f"{bb_url}/_seed/pullrequests/103/comments",
+                json={
+                    "id": 820,
+                    "body": "Initial text",
+                    "author": "Alice",
+                    "file_path": "feature.txt",
+                    "to": 1,
+                },
+                timeout=5,
+            ).raise_for_status()
+
+            self._run_sync(
+                origin_bare, dest_bare, bb_url, gh_url, sync_pull_requests=True
+            )
+            gh_prs = requests.get(
+                f"{gh_url}/repos/test-org/test-repo/pulls?state=open", timeout=5
+            ).json()
+            pr_num = gh_prs[0]["number"]
+
+            # Edit body and resolve on Bitbucket
+            requests.patch(
+                f"{bb_url}/_seed/pullrequests/103/comments/820",
+                json={
+                    "body": "Updated text",
+                    "is_resolved": True,
+                    "resolved_by": "Bob",
+                },
+                timeout=5,
+            ).raise_for_status()
+
+            res2 = self._run_sync(
+                origin_bare, dest_bare, bb_url, gh_url, sync_pull_requests=True
+            )
+            assert res2.errors == []
+
+            rc = requests.get(
+                f"{gh_url}/repos/test-org/test-repo/pulls/{pr_num}/comments", timeout=5
+            ).json()
+            assert len(rc) == 1
+            assert "Updated text" in rc[0]["body"]
+            assert "✅ Resolved by Bob" in rc[0]["body"]
+
+            gql_resp = requests.post(
+                f"{gh_url}/graphql",
+                json={
+                    "query": (
+                        "query($owner: String!, $repo: String!, $number: Int!) { "
+                        "repository(owner: $owner, name: $repo) { "
+                        "pullRequest(number: $number) { "
+                        "reviewThreads(first: 10) { nodes { id isResolved } } } } }"
+                    ),
+                    "variables": {
+                        "owner": "test-org",
+                        "repo": "test-repo",
+                        "number": pr_num,
+                    },
+                },
+                timeout=5,
+            ).json()
+            threads = gql_resp["data"]["repository"]["pullRequest"]["reviewThreads"][
+                "nodes"
+            ]
+            assert len(threads) == 1
+            assert threads[0]["isResolved"] is True
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_given_continuous_sync_when_resolved_review_thread_has_replies_then_destination_thread_remains_resolved(
+        self,
+        bitbucket_cloud_container: dict[str, Any],
+        github_container: dict[str, Any],
+    ) -> None:
+        import requests
+
+        bb_url = bitbucket_cloud_container["base_url"]
+        gh_url = github_container["base_url"]
+
+        root = tempfile.mkdtemp(prefix="pr_int_repos_")
+        try:
+            origin_bare, dest_bare = _setup_seeded_git_repos(root)
+            requests.post(
+                f"{bb_url}/_seed/pullrequests",
+                json={
+                    "id": 104,
+                    "title": "Resolved thread with reply",
+                    "source_branch": "feat/pr-sync",
+                    "target_branch": "main",
+                },
+                timeout=5,
+            ).raise_for_status()
+            requests.post(
+                f"{bb_url}/_seed/pullrequests/104/comments",
+                json={
+                    "id": 830,
+                    "body": "Root comment",
+                    "author": "Alice",
+                    "file_path": "feature.txt",
+                    "to": 1,
+                    "is_resolved": True,
+                    "resolved_by": "Alice",
+                },
+                timeout=5,
+            ).raise_for_status()
+            requests.post(
+                f"{bb_url}/_seed/pullrequests/104/comments",
+                json={
+                    "id": 831,
+                    "body": "Done!",
+                    "author": "Bob",
+                    "parent_id": 830,
+                },
+                timeout=5,
+            ).raise_for_status()
+
+            # Sync twice to verify continuous sync does not unresolve the thread
+            self._run_sync(
+                origin_bare, dest_bare, bb_url, gh_url, sync_pull_requests=True
+            )
+            res2 = self._run_sync(
+                origin_bare, dest_bare, bb_url, gh_url, sync_pull_requests=True
+            )
+            assert res2.errors == []
+
+            gh_prs = requests.get(
+                f"{gh_url}/repos/test-org/test-repo/pulls?state=open", timeout=5
+            ).json()
+            pr_num = gh_prs[0]["number"]
+            gql_resp = requests.post(
+                f"{gh_url}/graphql",
+                json={
+                    "query": (
+                        "query($owner: String!, $repo: String!, $number: Int!) { "
+                        "repository(owner: $owner, name: $repo) { "
+                        "pullRequest(number: $number) { "
+                        "reviewThreads(first: 10) { nodes { id isResolved } } } } }"
+                    ),
+                    "variables": {
+                        "owner": "test-org",
+                        "repo": "test-repo",
+                        "number": pr_num,
+                    },
+                },
+                timeout=5,
+            ).json()
+            threads = gql_resp["data"]["repository"]["pullRequest"]["reviewThreads"][
+                "nodes"
+            ]
+            assert len(threads) == 1
+            assert threads[0]["isResolved"] is True
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_given_inline_comment_rejected_with_422_when_syncing_then_destination_pr_contains_fallback_issue_comment_with_location(
+        self,
+        bitbucket_cloud_container: dict[str, Any],
+        github_container: dict[str, Any],
+    ) -> None:
+        import requests
+
+        bb_url = bitbucket_cloud_container["base_url"]
+        gh_url = github_container["base_url"]
+
+        root = tempfile.mkdtemp(prefix="pr_int_repos_")
+        try:
+            origin_bare, dest_bare = _setup_seeded_git_repos(root)
+            requests.post(
+                f"{gh_url}/_seed/reject_review_comment_path",
+                json={"path": "outdated.py"},
+                timeout=5,
+            ).raise_for_status()
+            requests.post(
+                f"{bb_url}/_seed/pullrequests",
+                json={
+                    "id": 105,
+                    "title": "Fallback 422 PR",
+                    "source_branch": "feat/pr-sync",
+                    "target_branch": "main",
+                },
+                timeout=5,
+            ).raise_for_status()
+            requests.post(
+                f"{bb_url}/_seed/pullrequests/105/comments",
+                json={
+                    "id": 840,
+                    "body": "Outdated hunk comment",
+                    "author": "Alice",
+                    "file_path": "outdated.py",
+                    "to": 99,
+                },
+                timeout=5,
+            ).raise_for_status()
+
+            result = self._run_sync(
+                origin_bare, dest_bare, bb_url, gh_url, sync_pull_requests=True
+            )
+            assert result.errors == []
+
+            gh_prs = requests.get(
+                f"{gh_url}/repos/test-org/test-repo/pulls?state=open", timeout=5
+            ).json()
+            pr_num = gh_prs[0]["number"]
+            review_comments = requests.get(
+                f"{gh_url}/repos/test-org/test-repo/pulls/{pr_num}/comments", timeout=5
+            ).json()
+            issue_comments = requests.get(
+                f"{gh_url}/repos/test-org/test-repo/issues/{pr_num}/comments", timeout=5
+            ).json()
+            assert review_comments == []
+            assert len(issue_comments) == 1
+            assert "on `outdated.py` (line 99)" in issue_comments[0]["body"]
+            assert "Outdated hunk comment" in issue_comments[0]["body"]
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_given_legacy_issue_comment_already_on_destination_when_syncing_then_destination_preserves_issue_comment_without_duplicate_review_comment(
+        self,
+        bitbucket_cloud_container: dict[str, Any],
+        github_container: dict[str, Any],
+    ) -> None:
+        import requests
+
+        bb_url = bitbucket_cloud_container["base_url"]
+        gh_url = github_container["base_url"]
+
+        root = tempfile.mkdtemp(prefix="pr_int_repos_")
+        try:
+            origin_bare, dest_bare = _setup_seeded_git_repos(root)
+            requests.post(
+                f"{bb_url}/_seed/pullrequests",
+                json={
+                    "id": 106,
+                    "title": "Legacy comment PR",
+                    "source_branch": "feat/pr-sync",
+                    "target_branch": "main",
+                },
+                timeout=5,
+            ).raise_for_status()
+            # Create PR first without comments
+            self._run_sync(
+                origin_bare, dest_bare, bb_url, gh_url, sync_pull_requests=True
+            )
+            gh_prs = requests.get(
+                f"{gh_url}/repos/test-org/test-repo/pulls?state=open", timeout=5
+            ).json()
+            pr_num = gh_prs[0]["number"]
+
+            # Seed legacy v1.1.5 issue comment directly on GitHub
+            requests.post(
+                f"{gh_url}/repos/test-org/test-repo/issues/{pr_num}/comments",
+                json={
+                    "body": (
+                        "> **Alice** | on `feature.txt` (line 1)\n\n"
+                        "Legacy inline comment\n\n"
+                        "<!-- gh-repo-sync:origin-comment-id=850 -->"
+                    )
+                },
+                timeout=5,
+            ).raise_for_status()
+
+            # Now Bitbucket has the same inline comment
+            requests.post(
+                f"{bb_url}/_seed/pullrequests/106/comments",
+                json={
+                    "id": 850,
+                    "body": "Legacy inline comment",
+                    "author": "Alice",
+                    "file_path": "feature.txt",
+                    "to": 1,
+                },
+                timeout=5,
+            ).raise_for_status()
+
+            res2 = self._run_sync(
+                origin_bare, dest_bare, bb_url, gh_url, sync_pull_requests=True
+            )
+            assert res2.errors == []
+
+            review_comments = requests.get(
+                f"{gh_url}/repos/test-org/test-repo/pulls/{pr_num}/comments", timeout=5
+            ).json()
+            issue_comments = requests.get(
+                f"{gh_url}/repos/test-org/test-repo/issues/{pr_num}/comments", timeout=5
+            ).json()
+            assert review_comments == []
+            assert len(issue_comments) == 1
+        finally:
+            shutil.rmtree(root, ignore_errors=True)

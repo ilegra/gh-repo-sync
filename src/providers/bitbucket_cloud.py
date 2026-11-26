@@ -99,6 +99,14 @@ class BitbucketCloudPrExporter(PrExporter):
             reviewers=reviewers,
         )
 
+    @staticmethod
+    def _parse_int(value: Any) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        return None
+
     def _parse_comment(self, item: dict[str, Any]) -> PullRequestComment | None:
         if item.get("deleted", False):
             return None
@@ -110,13 +118,44 @@ class BitbucketCloudPrExporter(PrExporter):
         user_obj = item.get("user") or {}
         author = user_obj.get("display_name") or user_obj.get("nickname") or "Unknown"
 
-        inline = item.get("inline") or {}
-        file_path = inline.get("path") if isinstance(inline, dict) else None
-        line = None
+        inline = item.get("inline")
+        file_path: str | None = None
+        line: int | None = None
+        side: str | None = None
+        start_line: int | None = None
+        start_side: str | None = None
         if isinstance(inline, dict):
-            line = (
-                inline.get("to") if inline.get("to") is not None else inline.get("from")
-            )
+            raw_path = inline.get("path")
+            if isinstance(raw_path, str) and raw_path.strip():
+                file_path = raw_path.strip()
+
+            to_line = self._parse_int(inline.get("to"))
+            from_line = self._parse_int(inline.get("from"))
+            if to_line is not None:
+                line = to_line
+                side = "RIGHT"
+            elif from_line is not None:
+                line = from_line
+                side = "LEFT"
+
+            if line is not None and side is not None:
+                start_to = self._parse_int(inline.get("start_to"))
+                start_from = self._parse_int(inline.get("start_from"))
+                if start_to is not None:
+                    start_line = start_to
+                    start_side = "RIGHT"
+                elif start_from is not None:
+                    start_line = start_from
+                    start_side = "LEFT"
+
+                if start_line is not None and start_side == side and start_line >= line:
+                    start_line = None
+                    start_side = None
+
+        parent = item.get("parent")
+        parent_id: str | None = None
+        if isinstance(parent, dict) and parent.get("id") is not None:
+            parent_id = str(parent["id"])
 
         resolution = item.get("resolution")
         is_resolved = isinstance(resolution, dict) and bool(resolution)
@@ -131,8 +170,12 @@ class BitbucketCloudPrExporter(PrExporter):
             author=str(author),
             created_at=str(item.get("created_on") or ""),
             updated_at=str(item.get("updated_on") or ""),
-            file_path=str(file_path) if file_path else None,
-            line=int(line) if isinstance(line, int) else None,
+            file_path=file_path,
+            line=line,
+            side=side,
+            start_line=start_line,
+            start_side=start_side,
+            parent_id=parent_id,
             is_resolved=is_resolved,
             resolved_by=str(resolved_by) if resolved_by else None,
         )
@@ -212,6 +255,7 @@ class BitbucketCloudPrExporter(PrExporter):
             f"{self._base_api_url()}/pullrequests/{pr_q}/comments?pagelen=100"
         )
         comments: list[PullRequestComment] = []
+        raw_parent_by_id: dict[str, str | None] = {}
 
         try:
             while url:
@@ -228,10 +272,20 @@ class BitbucketCloudPrExporter(PrExporter):
 
                 data: dict[str, Any] = response.json()
                 for item in data.get("values") or []:
-                    if isinstance(item, dict):
-                        parsed = self._parse_comment(item)
-                        if parsed is not None:
-                            comments.append(parsed)
+                    if not isinstance(item, dict):
+                        continue
+                    raw_id = item.get("id")
+                    if raw_id is not None:
+                        raw_parent = item.get("parent")
+                        raw_parent_by_id[str(raw_id)] = (
+                            str(raw_parent["id"])
+                            if isinstance(raw_parent, dict)
+                            and raw_parent.get("id") is not None
+                            else None
+                        )
+                    parsed = self._parse_comment(item)
+                    if parsed is not None:
+                        comments.append(parsed)
                 next_url = data.get("next")
                 url = str(next_url) if next_url else None
         except Exception as e:
@@ -240,6 +294,20 @@ class BitbucketCloudPrExporter(PrExporter):
                 pr_id=pr_id,
                 error=str(e),
             )
+
+        surviving_ids = {c.id for c in comments}
+        for comment in comments:
+            if comment.parent_id is not None and comment.parent_id not in surviving_ids:
+                visited: set[str] = {comment.id}
+                curr: str | None = comment.parent_id
+                resolved_parent: str | None = None
+                while curr is not None and curr not in visited:
+                    visited.add(curr)
+                    if curr in surviving_ids:
+                        resolved_parent = curr
+                        break
+                    curr = raw_parent_by_id.get(curr)
+                comment.parent_id = resolved_parent
 
         return comments
 

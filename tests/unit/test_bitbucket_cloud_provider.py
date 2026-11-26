@@ -797,3 +797,368 @@ class TestBitbucketCloudPrExporter:
         assert len(prs) == 2
         assert prs[0].reviewers == []
         assert prs[1].reviewers == []
+
+    @responses.activate
+    def test_given_inline_added_line_comment_when_getting_pr_comments_then_exports_right_side_and_line(
+        self,
+    ) -> None:
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        responses.add(
+            responses.GET,
+            url,
+            json={
+                "values": [
+                    {
+                        "id": 201,
+                        "content": {"raw": "Added line note"},
+                        "user": {"display_name": "Alice"},
+                        "inline": {"path": "README.md", "to": 284, "from": None},
+                    }
+                ]
+            },
+            status=200,
+        )
+
+        comments = self._make_exporter().get_pull_request_comments("10")
+        assert len(comments) == 1
+        assert comments[0].file_path == "README.md"
+        assert comments[0].line == 284
+        assert comments[0].side == "RIGHT"
+        assert comments[0].start_line is None
+        assert comments[0].start_side is None
+
+    @responses.activate
+    def test_given_inline_deleted_line_comment_when_getting_pr_comments_then_exports_left_side_and_line(
+        self,
+    ) -> None:
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        responses.add(
+            responses.GET,
+            url,
+            json={
+                "values": [
+                    {
+                        "id": 202,
+                        "content": {"raw": "Deleted line note"},
+                        "user": {"display_name": "Alice"},
+                        "inline": {"path": "README.md", "from": 280, "to": None},
+                    }
+                ]
+            },
+            status=200,
+        )
+
+        comments = self._make_exporter().get_pull_request_comments("10")
+        assert len(comments) == 1
+        assert comments[0].file_path == "README.md"
+        assert comments[0].line == 280
+        assert comments[0].side == "LEFT"
+        assert comments[0].start_line is None
+        assert comments[0].start_side is None
+
+    @responses.activate
+    def test_given_inline_context_line_with_both_to_and_from_when_getting_pr_comments_then_prefers_right_side_and_to_line(
+        self,
+    ) -> None:
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        responses.add(
+            responses.GET,
+            url,
+            json={
+                "values": [
+                    {
+                        "id": 203,
+                        "content": {"raw": "Context line"},
+                        "user": {"display_name": "Bob"},
+                        "inline": {"path": "src/app.py", "from": 12, "to": 18},
+                    }
+                ]
+            },
+            status=200,
+        )
+
+        comments = self._make_exporter().get_pull_request_comments("10")
+        assert len(comments) == 1
+        assert comments[0].line == 18
+        assert comments[0].side == "RIGHT"
+
+    @responses.activate
+    def test_given_multiline_right_side_comment_when_getting_pr_comments_then_exports_start_line_and_start_side_right(
+        self,
+    ) -> None:
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        responses.add(
+            responses.GET,
+            url,
+            json={
+                "values": [
+                    {
+                        "id": 204,
+                        "content": {"raw": "Refactor block"},
+                        "user": {"display_name": "Carol"},
+                        "inline": {"path": "src/app.ts", "start_to": 10, "to": 15},
+                    }
+                ]
+            },
+            status=200,
+        )
+
+        comments = self._make_exporter().get_pull_request_comments("10")
+        assert len(comments) == 1
+        assert comments[0].file_path == "src/app.ts"
+        assert comments[0].start_line == 10
+        assert comments[0].start_side == "RIGHT"
+        assert comments[0].line == 15
+        assert comments[0].side == "RIGHT"
+
+    @responses.activate
+    def test_given_multiline_left_side_comment_when_getting_pr_comments_then_exports_start_line_and_start_side_left(
+        self,
+    ) -> None:
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        responses.add(
+            responses.GET,
+            url,
+            json={
+                "values": [
+                    {
+                        "id": 205,
+                        "content": {"raw": "Deleted block"},
+                        "user": {"display_name": "Carol"},
+                        "inline": {
+                            "path": "src/app.ts",
+                            "start_from": 20,
+                            "from": 25,
+                            "to": None,
+                        },
+                    }
+                ]
+            },
+            status=200,
+        )
+
+        comments = self._make_exporter().get_pull_request_comments("10")
+        assert len(comments) == 1
+        assert comments[0].start_line == 20
+        assert comments[0].start_side == "LEFT"
+        assert comments[0].line == 25
+        assert comments[0].side == "LEFT"
+
+    @responses.activate
+    def test_given_cross_side_multiline_comment_when_getting_pr_comments_then_exports_start_side_left_and_side_right(
+        self,
+    ) -> None:
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        responses.add(
+            responses.GET,
+            url,
+            json={
+                "values": [
+                    {
+                        "id": 206,
+                        "content": {"raw": "Cross side"},
+                        "user": {"display_name": "Carol"},
+                        "inline": {"path": "src/app.ts", "start_from": 30, "to": 32},
+                    }
+                ]
+            },
+            status=200,
+        )
+
+        comments = self._make_exporter().get_pull_request_comments("10")
+        assert len(comments) == 1
+        assert comments[0].start_line == 30
+        assert comments[0].start_side == "LEFT"
+        assert comments[0].line == 32
+        assert comments[0].side == "RIGHT"
+
+    @responses.activate
+    def test_given_multiline_comment_with_equal_or_inverted_bounds_when_getting_pr_comments_then_normalizes_to_single_line(
+        self,
+    ) -> None:
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        responses.add(
+            responses.GET,
+            url,
+            json={
+                "values": [
+                    {
+                        "id": 207,
+                        "content": {"raw": "Equal bounds"},
+                        "inline": {"path": "a.py", "start_to": 10, "to": 10},
+                    },
+                    {
+                        "id": 208,
+                        "content": {"raw": "Inverted bounds"},
+                        "inline": {"path": "a.py", "start_to": 15, "to": 10},
+                    },
+                ]
+            },
+            status=200,
+        )
+
+        comments = self._make_exporter().get_pull_request_comments("10")
+        assert len(comments) == 2
+        for cm in comments:
+            assert cm.line == 10
+            assert cm.side == "RIGHT"
+            assert cm.start_line is None
+            assert cm.start_side is None
+
+    @responses.activate
+    def test_given_file_level_inline_comment_when_getting_pr_comments_then_exports_file_path_with_none_line_and_side(
+        self,
+    ) -> None:
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        responses.add(
+            responses.GET,
+            url,
+            json={
+                "values": [
+                    {
+                        "id": 209,
+                        "content": {"raw": "Whole file feedback"},
+                        "user": {"display_name": "Dave"},
+                        "inline": {"path": "src/app.ts", "to": None, "from": None},
+                    }
+                ]
+            },
+            status=200,
+        )
+
+        comments = self._make_exporter().get_pull_request_comments("10")
+        assert len(comments) == 1
+        assert comments[0].file_path == "src/app.ts"
+        assert comments[0].line is None
+        assert comments[0].side is None
+        assert comments[0].start_line is None
+        assert comments[0].start_side is None
+
+    @responses.activate
+    def test_given_threaded_reply_comment_when_getting_pr_comments_then_exports_parent_id(
+        self,
+    ) -> None:
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        responses.add(
+            responses.GET,
+            url,
+            json={
+                "values": [
+                    {
+                        "id": 300,
+                        "content": {"raw": "Root"},
+                        "inline": {"path": "src/app.py", "to": 5},
+                    },
+                    {
+                        "id": 301,
+                        "content": {"raw": "Reply"},
+                        "parent": {"id": 300},
+                    },
+                ]
+            },
+            status=200,
+        )
+
+        comments = self._make_exporter().get_pull_request_comments("10")
+        assert len(comments) == 2
+        assert comments[0].parent_id is None
+        assert comments[1].parent_id == "300"
+
+    @responses.activate
+    def test_given_reply_to_deleted_intermediate_comment_when_getting_pr_comments_then_reparents_to_nearest_surviving_ancestor(
+        self,
+    ) -> None:
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        responses.add(
+            responses.GET,
+            url,
+            json={
+                "values": [
+                    {
+                        "id": 400,
+                        "content": {"raw": "Root"},
+                        "inline": {"path": "src/app.py", "to": 5},
+                    },
+                    {
+                        "id": 401,
+                        "deleted": True,
+                        "content": {"raw": "Deleted middle"},
+                        "parent": {"id": 400},
+                    },
+                    {
+                        "id": 402,
+                        "content": {"raw": "Surviving child"},
+                        "parent": {"id": 401},
+                    },
+                ]
+            },
+            status=200,
+        )
+
+        comments = self._make_exporter().get_pull_request_comments("10")
+        assert [c.id for c in comments] == ["400", "402"]
+        assert comments[1].parent_id == "400"
+
+    @responses.activate
+    def test_given_reply_to_deleted_root_comment_when_getting_pr_comments_then_clears_parent_id(
+        self,
+    ) -> None:
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        responses.add(
+            responses.GET,
+            url,
+            json={
+                "values": [
+                    {
+                        "id": 500,
+                        "deleted": True,
+                        "content": {"raw": "Deleted root"},
+                    },
+                    {
+                        "id": 501,
+                        "content": {"raw": "Orphaned reply"},
+                        "parent": {"id": 500},
+                    },
+                ]
+            },
+            status=200,
+        )
+
+        comments = self._make_exporter().get_pull_request_comments("10")
+        assert [c.id for c in comments] == ["501"]
+        assert comments[0].parent_id is None
+
+    @responses.activate
+    def test_given_malformed_inline_and_parent_payloads_when_getting_pr_comments_then_handles_gracefully_without_failing(
+        self,
+    ) -> None:
+        url = "https://api.bitbucket.org/2.0/repositories/my-workspace/my-repo/pullrequests/10/comments?pagelen=100"
+        responses.add(
+            responses.GET,
+            url,
+            json={
+                "values": [
+                    {
+                        "id": 600,
+                        "content": {"raw": "Weird payload"},
+                        "inline": "not-a-dict",
+                        "parent": "not-a-dict",
+                    },
+                    {
+                        "id": 601,
+                        "content": {"raw": "Bool line"},
+                        "inline": {"path": "  ", "to": True, "from": "abc"},
+                        "parent": {},
+                    },
+                ]
+            },
+            status=200,
+        )
+
+        comments = self._make_exporter().get_pull_request_comments("10")
+        assert len(comments) == 2
+        for cm in comments:
+            assert cm.file_path is None
+            assert cm.line is None
+            assert cm.side is None
+            assert cm.parent_id is None
