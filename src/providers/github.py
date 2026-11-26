@@ -810,6 +810,15 @@ class GitHubPrImporter(PrImporter):
             )
         return thread_by_comment
 
+    @staticmethod
+    def _lookup_review_thread(
+        thread_map: dict[str, tuple[str, bool]],
+        comment: _GitHubTrackedComment,
+    ) -> tuple[str, bool] | None:
+        if comment.node_id and comment.node_id in thread_map:
+            return thread_map[comment.node_id]
+        return thread_map.get(comment.comment_id)
+
     def _list_tracked_comments(
         self, pr_number: int
     ) -> dict[str, _GitHubTrackedComment]:
@@ -820,20 +829,19 @@ class GitHubPrImporter(PrImporter):
             if marker_id:
                 tracked[marker_id] = gh_comment
 
-        review_comments = self._list_pull_request_review_comments(pr_number)
-        if review_comments:
+        tracked_review_comments: list[tuple[str, _GitHubTrackedComment]] = []
+        for review_comment in self._list_pull_request_review_comments(pr_number):
+            marker_id = self._extract_origin_comment_id(review_comment.body)
+            if marker_id:
+                tracked_review_comments.append((marker_id, review_comment))
+
+        if tracked_review_comments:
             thread_map = self._fetch_review_threads(pr_number)
-            for review_comment in review_comments:
-                thread_info = (
-                    thread_map.get(review_comment.node_id)
-                    if review_comment.node_id
-                    else None
-                ) or thread_map.get(review_comment.comment_id)
+            for marker_id, review_comment in tracked_review_comments:
+                thread_info = self._lookup_review_thread(thread_map, review_comment)
                 if thread_info is not None:
                     review_comment.thread_id, review_comment.is_resolved = thread_info
-                marker_id = self._extract_origin_comment_id(review_comment.body)
-                if marker_id:
-                    tracked[marker_id] = review_comment
+                tracked[marker_id] = review_comment
 
         return tracked
 
@@ -965,13 +973,19 @@ class GitHubPrImporter(PrImporter):
         )
         response.raise_for_status()
 
-    def _resolve_review_thread(self, thread_id: str) -> None:
+    def _set_review_thread_resolved(self, thread_id: str, resolved: bool) -> None:
+        mutation = (
+            _RESOLVE_REVIEW_THREAD_MUTATION
+            if resolved
+            else _UNRESOLVE_REVIEW_THREAD_MUTATION
+        )
+        action = "resolve" if resolved else "unresolve"
         try:
             response = self._session.post(
                 self._graphql_url,
                 headers=self._headers(),
                 json={
-                    "query": _RESOLVE_REVIEW_THREAD_MUTATION,
+                    "query": mutation,
                     "variables": {"threadId": thread_id},
                 },
                 timeout=15,
@@ -980,39 +994,13 @@ class GitHubPrImporter(PrImporter):
             payload: dict[str, Any] = response.json()
             if payload.get("errors"):
                 logger.warning(
-                    "GraphQL returned errors while resolving review thread",
+                    f"GraphQL returned errors while {action[:-1]}ing review thread",
                     thread_id=thread_id,
                     errors=payload.get("errors"),
                 )
         except Exception as e:
             logger.warning(
-                "Failed to resolve PR review thread via GraphQL",
-                thread_id=thread_id,
-                error=str(e),
-            )
-
-    def _unresolve_review_thread(self, thread_id: str) -> None:
-        try:
-            response = self._session.post(
-                self._graphql_url,
-                headers=self._headers(),
-                json={
-                    "query": _UNRESOLVE_REVIEW_THREAD_MUTATION,
-                    "variables": {"threadId": thread_id},
-                },
-                timeout=15,
-            )
-            response.raise_for_status()
-            payload: dict[str, Any] = response.json()
-            if payload.get("errors"):
-                logger.warning(
-                    "GraphQL returned errors while unresolving review thread",
-                    thread_id=thread_id,
-                    errors=payload.get("errors"),
-                )
-        except Exception as e:
-            logger.warning(
-                "Failed to unresolve PR review thread via GraphQL",
+                f"Failed to {action} PR review thread via GraphQL",
                 thread_id=thread_id,
                 error=str(e),
             )
@@ -1057,6 +1045,99 @@ class GitHubPrImporter(PrImporter):
             curr_id = parent.parent_id
         return comment.parent_id
 
+    def _create_synced_comment(
+        self,
+        pr_number: int,
+        origin_comment: PullRequestComment,
+        comments_by_id: dict[str, PullRequestComment],
+        tracked_comments: dict[str, _GitHubTrackedComment],
+        resolver: GitHubUserResolver | None,
+        head_sha: str,
+    ) -> tuple[_GitHubTrackedComment, bool]:
+        root_origin_id = self._resolve_root_origin_id(origin_comment, comments_by_id)
+        parent_tracked = (
+            tracked_comments.get(root_origin_id) if root_origin_id else None
+        )
+
+        in_reply_to: str | None = None
+        should_attempt_review = False
+        if parent_tracked is not None:
+            if parent_tracked.is_review_comment:
+                in_reply_to = parent_tracked.in_reply_to_id or parent_tracked.comment_id
+                should_attempt_review = True
+        elif origin_comment.file_path and head_sha:
+            should_attempt_review = True
+
+        if should_attempt_review:
+            review_body = self._format_comment_body(
+                origin_comment, resolver=resolver, include_location=False
+            )
+            created_review = self._create_pull_request_review_comment(
+                pr_number=pr_number,
+                body=review_body,
+                head_sha=head_sha,
+                comment=origin_comment,
+                in_reply_to=in_reply_to,
+            )
+            if created_review is not None:
+                needs_thread_resolve = (
+                    origin_comment.is_resolved and origin_comment.parent_id is None
+                )
+                return created_review, needs_thread_resolve
+
+        issue_body = self._format_comment_body(
+            origin_comment, resolver=resolver, include_location=True
+        )
+        created_issue = self._create_pull_request_comment(pr_number, issue_body)
+        if origin_comment.is_resolved and created_issue.node_id:
+            self._resolve_pull_request_comment(created_issue.node_id)
+        return created_issue, False
+
+    def _update_synced_comment(
+        self,
+        origin_comment: PullRequestComment,
+        existing: _GitHubTrackedComment,
+        resolver: GitHubUserResolver | None,
+    ) -> bool:
+        formatted_body = self._format_comment_body(
+            origin_comment,
+            resolver=resolver,
+            include_location=not existing.is_review_comment,
+        )
+        changed = False
+        if existing.body != formatted_body:
+            if existing.is_review_comment:
+                self._update_pull_request_review_comment(
+                    existing.comment_id, formatted_body
+                )
+            else:
+                self._update_pull_request_comment(existing.comment_id, formatted_body)
+            existing.body = formatted_body
+            changed = True
+
+        if origin_comment.is_resolved == existing.is_resolved:
+            return changed
+
+        if existing.is_review_comment:
+            is_root = (
+                origin_comment.parent_id is None and existing.in_reply_to_id is None
+            )
+            if is_root and existing.thread_id:
+                self._set_review_thread_resolved(
+                    existing.thread_id, origin_comment.is_resolved
+                )
+                existing.is_resolved = origin_comment.is_resolved
+                changed = True
+        elif existing.node_id:
+            if origin_comment.is_resolved:
+                self._resolve_pull_request_comment(existing.node_id)
+            else:
+                self._unresolve_pull_request_comment(existing.node_id)
+            existing.is_resolved = origin_comment.is_resolved
+            changed = True
+
+        return changed
+
     def _sync_pr_comments(
         self,
         pr_number: int,
@@ -1077,120 +1158,30 @@ class GitHubPrImporter(PrImporter):
 
         for origin_comment in ordered_comments:
             existing = tracked_comments.get(origin_comment.id)
-
             if existing is None:
-                root_origin_id = self._resolve_root_origin_id(
-                    origin_comment, comments_by_id
-                )
-                parent_tracked = (
-                    tracked_comments.get(root_origin_id) if root_origin_id else None
-                )
-
-                created_review: _GitHubTrackedComment | None = None
-                if parent_tracked is not None:
-                    if parent_tracked.is_review_comment:
-                        github_root_id = (
-                            parent_tracked.in_reply_to_id or parent_tracked.comment_id
-                        )
-                        review_body = self._format_comment_body(
-                            origin_comment,
-                            resolver=resolver,
-                            include_location=False,
-                        )
-                        created_review = self._create_pull_request_review_comment(
-                            pr_number=pr_number,
-                            body=review_body,
-                            head_sha=head_sha,
-                            comment=origin_comment,
-                            in_reply_to=github_root_id,
-                        )
-                elif origin_comment.file_path and head_sha:
-                    review_body = self._format_comment_body(
-                        origin_comment,
-                        resolver=resolver,
-                        include_location=False,
-                    )
-                    created_review = self._create_pull_request_review_comment(
-                        pr_number=pr_number,
-                        body=review_body,
-                        head_sha=head_sha,
-                        comment=origin_comment,
-                    )
-
-                if created_review is not None:
-                    tracked_comments[origin_comment.id] = created_review
-                    result.synced_pr_comments += 1
-                    if origin_comment.is_resolved and origin_comment.parent_id is None:
-                        newly_created_resolved_review_comments.append(created_review)
-                else:
-                    issue_body = self._format_comment_body(
-                        origin_comment,
-                        resolver=resolver,
-                        include_location=True,
-                    )
-                    created_issue = self._create_pull_request_comment(
-                        pr_number, issue_body
-                    )
-                    tracked_comments[origin_comment.id] = created_issue
-                    result.synced_pr_comments += 1
-                    if origin_comment.is_resolved and created_issue.node_id:
-                        self._resolve_pull_request_comment(created_issue.node_id)
-            else:
-                formatted_body = self._format_comment_body(
-                    origin_comment,
+                created, needs_thread_resolve = self._create_synced_comment(
+                    pr_number=pr_number,
+                    origin_comment=origin_comment,
+                    comments_by_id=comments_by_id,
+                    tracked_comments=tracked_comments,
                     resolver=resolver,
-                    include_location=not existing.is_review_comment,
+                    head_sha=head_sha,
                 )
-                changed = False
-                if existing.body != formatted_body:
-                    if existing.is_review_comment:
-                        self._update_pull_request_review_comment(
-                            existing.comment_id, formatted_body
-                        )
-                    else:
-                        self._update_pull_request_comment(
-                            existing.comment_id, formatted_body
-                        )
-                    existing.body = formatted_body
-                    changed = True
-
-                if existing.is_review_comment:
-                    is_root = (
-                        origin_comment.parent_id is None
-                        and existing.in_reply_to_id is None
-                    )
-                    if is_root and existing.thread_id:
-                        if origin_comment.is_resolved and not existing.is_resolved:
-                            self._resolve_review_thread(existing.thread_id)
-                            existing.is_resolved = True
-                            changed = True
-                        elif not origin_comment.is_resolved and existing.is_resolved:
-                            self._unresolve_review_thread(existing.thread_id)
-                            existing.is_resolved = False
-                            changed = True
-                elif existing.node_id:
-                    if origin_comment.is_resolved and not existing.is_resolved:
-                        self._resolve_pull_request_comment(existing.node_id)
-                        existing.is_resolved = True
-                        changed = True
-                    elif not origin_comment.is_resolved and existing.is_resolved:
-                        self._unresolve_pull_request_comment(existing.node_id)
-                        existing.is_resolved = False
-                        changed = True
-
-                if changed:
-                    result.synced_pr_comments += 1
+                tracked_comments[origin_comment.id] = created
+                result.synced_pr_comments += 1
+                if needs_thread_resolve:
+                    newly_created_resolved_review_comments.append(created)
+            elif self._update_synced_comment(origin_comment, existing, resolver):
+                result.synced_pr_comments += 1
 
         if newly_created_resolved_review_comments:
             thread_map = self._fetch_review_threads(pr_number)
             for created_cm in newly_created_resolved_review_comments:
-                thread_info = (
-                    thread_map.get(created_cm.node_id) if created_cm.node_id else None
-                ) or thread_map.get(created_cm.comment_id)
+                thread_info = self._lookup_review_thread(thread_map, created_cm)
                 if thread_info is not None:
                     thread_id, is_resolved = thread_info
                     if not is_resolved:
-                        self._resolve_review_thread(thread_id)
+                        self._set_review_thread_resolved(thread_id, resolved=True)
 
     def _close_completed_pull_request(
         self,

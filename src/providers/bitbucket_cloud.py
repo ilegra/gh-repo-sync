@@ -107,6 +107,25 @@ class BitbucketCloudPrExporter(PrExporter):
             return value
         return None
 
+    @classmethod
+    def _parse_inline_position(
+        cls, inline: dict[str, Any], to_key: str, from_key: str
+    ) -> tuple[int | None, str | None]:
+        to_line = cls._parse_int(inline.get(to_key))
+        if to_line is not None:
+            return to_line, "RIGHT"
+        from_line = cls._parse_int(inline.get(from_key))
+        if from_line is not None:
+            return from_line, "LEFT"
+        return None, None
+
+    @staticmethod
+    def _extract_parent_id(item: dict[str, Any]) -> str | None:
+        parent = item.get("parent")
+        if isinstance(parent, dict) and parent.get("id") is not None:
+            return str(parent["id"])
+        return None
+
     def _parse_comment(self, item: dict[str, Any]) -> PullRequestComment | None:
         if item.get("deleted", False):
             return None
@@ -129,33 +148,16 @@ class BitbucketCloudPrExporter(PrExporter):
             if isinstance(raw_path, str) and raw_path.strip():
                 file_path = raw_path.strip()
 
-            to_line = self._parse_int(inline.get("to"))
-            from_line = self._parse_int(inline.get("from"))
-            if to_line is not None:
-                line = to_line
-                side = "RIGHT"
-            elif from_line is not None:
-                line = from_line
-                side = "LEFT"
-
+            line, side = self._parse_inline_position(inline, "to", "from")
             if line is not None and side is not None:
-                start_to = self._parse_int(inline.get("start_to"))
-                start_from = self._parse_int(inline.get("start_from"))
-                if start_to is not None:
-                    start_line = start_to
-                    start_side = "RIGHT"
-                elif start_from is not None:
-                    start_line = start_from
-                    start_side = "LEFT"
-
+                start_line, start_side = self._parse_inline_position(
+                    inline, "start_to", "start_from"
+                )
                 if start_line is not None and start_side == side and start_line >= line:
                     start_line = None
                     start_side = None
 
-        parent = item.get("parent")
-        parent_id: str | None = None
-        if isinstance(parent, dict) and parent.get("id") is not None:
-            parent_id = str(parent["id"])
+        parent_id = self._extract_parent_id(item)
 
         resolution = item.get("resolution")
         is_resolved = isinstance(resolution, dict) and bool(resolution)
@@ -276,13 +278,7 @@ class BitbucketCloudPrExporter(PrExporter):
                         continue
                     raw_id = item.get("id")
                     if raw_id is not None:
-                        raw_parent = item.get("parent")
-                        raw_parent_by_id[str(raw_id)] = (
-                            str(raw_parent["id"])
-                            if isinstance(raw_parent, dict)
-                            and raw_parent.get("id") is not None
-                            else None
-                        )
+                        raw_parent_by_id[str(raw_id)] = self._extract_parent_id(item)
                     parsed = self._parse_comment(item)
                     if parsed is not None:
                         comments.append(parsed)
@@ -297,17 +293,18 @@ class BitbucketCloudPrExporter(PrExporter):
 
         surviving_ids = {c.id for c in comments}
         for comment in comments:
-            if comment.parent_id is not None and comment.parent_id not in surviving_ids:
-                visited: set[str] = {comment.id}
-                curr: str | None = comment.parent_id
-                resolved_parent: str | None = None
-                while curr is not None and curr not in visited:
-                    visited.add(curr)
-                    if curr in surviving_ids:
-                        resolved_parent = curr
-                        break
-                    curr = raw_parent_by_id.get(curr)
-                comment.parent_id = resolved_parent
+            if comment.parent_id is None or comment.parent_id in surviving_ids:
+                continue
+            visited: set[str] = {comment.id}
+            curr: str | None = comment.parent_id
+            resolved_parent: str | None = None
+            while curr is not None and curr not in visited:
+                visited.add(curr)
+                if curr in surviving_ids:
+                    resolved_parent = curr
+                    break
+                curr = raw_parent_by_id.get(curr)
+            comment.parent_id = resolved_parent
 
         return comments
 
