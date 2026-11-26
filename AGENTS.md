@@ -5,3 +5,63 @@
 - **Private Methods/Functions**: All internal helper methods, utility functions, and non-exported routines MUST be prefixed with a single underscore (`_`).
 - **Minimal Surface Area**: Classes and modules must expose the absolute minimum number of public methods/functions necessary to fulfill their contract.
 - **Docstrings on Public Members**: All public classes, methods, and functions must have descriptive docstrings explaining their purpose, parameters, and return values. Internal/private helpers do not require docstrings if self-explanatory.
+
+## Coding guidelines
+
+### 1. Data Classes & Separation of Concerns
+
+- **Pure Data Containers**: Data classes, models, and data transfer objects (DTOs) should represent state and hold data only. They must not contain business rules, validation workflows, or external serialization logic.
+- **Service/Client Encapsulation**: Any formatting, parsing, padding, or protocol-specific serialization rules for external systems belong inside the responsible client/service (as private helper methods) or within dedicated converter components, never inside the data models.
+
+### 2. Code Comments & Documentation
+
+- **Minimal & Purposeful Comments**: Code comments should only be added in public methods or complex logic and is not reasonable only looking at the code.
+- **Self-Documenting Code**: Avoid redundant comments that merely restate what readable code is doing.
+- **Public API Documentation**: Use clear, concise docstrings on public classes, methods, and functions to describe parameters, return types, and exceptions.
+
+### 5. Testing Principles
+
+#### Unit Tests (`tests/unit/`)
+
+- **Scope & Isolation**: Unit tests must execute fast, deterministically, and offline without accessing external systems, APIs, or databases. All external dependencies and I/O collaborators must be mocked or injected.
+- **Mandatory Behavior Coverage (Exclude Pure Dataclasses)**: Every class that encapsulates behavior, business logic, workflows, or transformations must be covered by unit tests. Pure dataclasses, models, and DTOs that serve strictly as data containers without business logic must not be unit tested; test data structures only if they encapsulate custom validation, state transitions, or computed properties (`@property` with logic).
+- **Test Exclusively via Public Methods**: Tests must only exercise behaviors through public methods and public APIs. Never test, invoke, or inspect private methods (`_method`) in unit tests.
+- **Required Test Scenarios**: A comprehensive unit test suite for any behavioral class must systematically cover:
+  1. *Successful Collaboration (Valid Input & Valid Dependency Output)*: Valid input is given, external dependencies/collaborators return valid outputs, and the method orchestrates and returns the expected results.
+  2. *Internal Behavior & State (Valid Input)*: Valid input is given, validating internal business logic, data transformations, calculations, and expected state mutations.
+  3. *Dependency Failure Handling (Valid Input & Failing Dependencies)*: Valid input is given, but external dependencies or collaborators reply with errors or raise exceptions (e.g., network timeouts, HTTP 4xx/5xx responses), validating proper error translation, logging, resilience, or exception propagation.
+  4. *Invalid Input Handling (Negative Scenarios)*: Invalid, missing, null, empty, or malformed inputs are given, validating that proper validation errors or domain exceptions (`ValueError`, `TypeError`) are raised.
+- **Scenario Naming ("Given..When..Then" Pattern)**: Test function and method names must strictly follow the `test_given_<precondition>_when_<action>_then_<outcome>` pattern to clearly document test intent and expected behavior.
+  - *Examples*:
+    - `test_given_valid_repo_url_and_successful_client_when_scraping_then_returns_repository`
+    - `test_given_unregistered_repository_when_updating_progress_then_creates_new_record_and_marks_in_progress`
+    - `test_given_network_timeout_from_transport_when_listing_directory_then_raises_scraper_connection_error`
+    - `test_given_empty_repository_url_when_scraping_then_raises_value_error`
+    - `test_given_existing_repository_when_registering_then_preserves_status_and_migration_dates`
+
+#### Integration Tests (`tests/integration/`)
+
+- **Scope & Validation**: Integration tests validate end-to-end interactions and protocol compliance between the implementation and external dependencies (e.g., Dockerized platforms such as SVN/Jenkins, live Google Sheets API).
+- **Execution & Isolation Constraints**: Run against configured local test containers or integration environments. Avoid parallel execution when tests share state or external resources to prevent race conditions and cross-test contamination.
+- **Realistic Data Flows**: Validate end-to-end persistence, network retry behaviors, payload serialization, and live integration boundaries using representative domain data.
+
+### 4. Logging Guidelines & Standards
+
+- **Default Level**: The application-wide default logging level is `INFO`. Operational execution should provide meaningful progress and lifecycle visibility out-of-the-box without inundating stdout/stderr.
+- **Logger Initialization**: Always declare a module-level logger via standard library:
+  ```python
+  import logging
+
+  logger = logging.getLogger(__name__)
+  ```
+- **Level Standards & Criteria**:
+  - `DEBUG`: Fine-grained operational tracing and diagnostic diagnostics intended for debugging and troubleshooting.
+    - *When to use*: Detailed in-memory diff breakdowns (counts of added, updated, unchanged records per entity key), skipped malformed spreadsheet rows (with row index and reason), chunk partition sizes and ranges during batch processing, raw response status and parsed entity keys.
+  - `INFO`: Coarse-grained operational milestones and lifecycle progress markers (default visibility).
+    - *When to use*: Initiation and completion of inventory synchronization workflows, high-level summary metrics (e.g., `"Synchronized %d records (added=%d, updated=%d, unchanged=%d)"`), start and completion of batch persistence chunks to external storage (e.g., `"Batch appending %d rows to '%s' tab..."`).
+  - `ERROR`: Unrecoverable errors, unexpected operational failures, network drops, or corrupt configuration states.
+    - *When to use*: Unhandled exceptions, failed non-retriable Google Sheets API executions, authentication failures, missing/corrupted credential files, or fatal payload conversions before domain exception translation.
+- **Rules of Conduct**:
+  - **Zero Secret Leakage**: Never log credentials, bearer tokens, passwords, API keys, or private authorization headers.
+  - **Parameterized Formatting**: Use parameterized format arguments (`logger.info("Processed %d items", count)`) rather than f-strings to avoid unnecessary string interpolation overhead when log levels are inactive.
+  - **Domain Separation**: Do not pollute pure dataclasses or abstract structural protocols with logging statements. Logging belongs within service orchestrators, diff computation engines, transport adapters, and CLI dispatchers.
